@@ -16,9 +16,15 @@ public class RespParser {
     // The RespParser class is responsible for parsing RESP-formatted data received from clients
     // and converting it into a more usable format (e.g., a list of strings representing commands and their arguments).
 
+    /**
+     * Parses a RESP-formatted command from the input stream.
+     *
+     * @param input The input stream containing the RESP data.
+     * @return A list of strings representing the command and its arguments.
+     * @throws IOException If an I/O error occurs or if the RESP format is invalid.
+     */
     public List<String> parseCommand(BufferedInputStream input) throws IOException {
         int firstByte = input.read();
-
         if (firstByte == -1) {
             return null;
         }
@@ -63,12 +69,19 @@ public class RespParser {
         return command;
     }
 
+    /**
+     * Reads an integer from the input stream.
+     *
+     * @param input The input stream.
+     * @return The integer value.
+     * @throws IOException If an I/O error occurs or if the format is invalid.
+     */
     private int readInteger(BufferedInputStream input) throws IOException {
 
         StringBuilder number = new StringBuilder();
         int b;
 
-        while ((b = input.read()) != -1) {
+        while ((b = input.read()) != -1) { // Read bytes until the end of the stream or until a CRLF is encountered.
             if (b == '\r') {
                 int next = input.read();
 
@@ -78,7 +91,7 @@ public class RespParser {
                 break;
             }
 
-            number.append((char) b);
+            number.append((char) b); // Append the character representation of the byte to the StringBuilder then it will be converted to a string and then parsed as an integer.
         }
 
         if (number.isEmpty()) {
@@ -92,6 +105,7 @@ public class RespParser {
         }
     }
 
+    /** Reads a CRLF (Carriage Return Line Feed) sequence from the input stream. */
     private void readCRLF(BufferedInputStream input) throws IOException {
 
         int cr = input.read();

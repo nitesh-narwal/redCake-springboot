@@ -28,7 +28,6 @@ public class CommandHandler {
      *     }
      *  }
      * */
-
     private final Map<String, RedCakeCommand> commands;
 
     public CommandHandler(List<RedCakeCommand> commandList) {
