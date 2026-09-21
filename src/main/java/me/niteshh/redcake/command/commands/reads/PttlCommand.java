@@ -1,6 +1,5 @@
-package me.niteshh.redcake.command.commands;
+package me.niteshh.redcake.command.commands.reads;
 
-import lombok.AllArgsConstructor;
 import me.niteshh.redcake.command.RedCakeCommand;
 import me.niteshh.redcake.resp.ErrorValue;
 import me.niteshh.redcake.resp.IntegerValue;
@@ -11,29 +10,28 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 @Component
-@AllArgsConstructor
-public class TtlCommand implements RedCakeCommand {
+public class PttlCommand implements RedCakeCommand { // This command returns the remaining time to live of a key in milliseconds.
 
     private final KeyValueStore store;
 
+    public PttlCommand(KeyValueStore store) {
+        this.store = store;
+    }
+
     @Override
     public String name() {
-        return "TTL";
+        return "PTTL";
     }
 
     @Override
     public RespValue execute(List<String> arguments) {
 
         if (arguments.size() != 1) {
-            return new ErrorValue(
-                    "wrong number of arguments for 'ttl' command"
-            );
+            return new ErrorValue("wrong number of arguments for 'pttl' command");
         }
 
-        String key = arguments.get(0);
+        String key = arguments.getFirst();
 
-        return new IntegerValue(
-                store.ttl(key)
-        );
+        return new IntegerValue(store.pttl(key));
     }
 }

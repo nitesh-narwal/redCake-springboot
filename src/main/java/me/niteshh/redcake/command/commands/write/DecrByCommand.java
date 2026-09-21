@@ -1,4 +1,4 @@
-package me.niteshh.redcake.command.commands;
+package me.niteshh.redcake.command.commands.write;
 
 import lombok.AllArgsConstructor;
 import me.niteshh.redcake.command.RedCakeCommand;
@@ -13,19 +13,19 @@ import java.util.List;
 
 @Component
 @AllArgsConstructor
-public class IncrByCommand implements RedCakeCommand {
+public class DecrByCommand implements RedCakeCommand {
 
     private final KeyValueStore store;
 
     @Override
     public String name() {
-        return "INCRBY";
+        return "DECRBY";
     }
 
     @Override
     public RespValue execute(List<String> arguments) {
         if (arguments.size() != 2) {
-            return new ErrorValue("wrong number of arguments for 'incrby' command");
+            return new ErrorValue("wrong number of arguments for 'decrby' command");
         }
 
         String key = arguments.get(0);
@@ -37,8 +37,17 @@ public class IncrByCommand implements RedCakeCommand {
             return new ErrorValue("value is not an integer or out of range");
         }
 
+        /*
+         * DECRBY key 5
+         * is equivalent to:
+         * INCRBY key -5
+         */
+        if (amount == Long.MIN_VALUE) {
+            return new ErrorValue("increment or decrement would overflow");
+        }
+
         try {
-            long value = store.increment(key, amount);
+            long value = store.increment(key, -amount);
             return new IntegerValue(value);
         } catch (InvalidIntegerException e) {
             return new ErrorValue(e.getMessage());

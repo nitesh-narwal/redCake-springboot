@@ -1,4 +1,4 @@
-package me.niteshh.redcake.command.commands;
+package me.niteshh.redcake.command.commands.reads;
 
 import lombok.AllArgsConstructor;
 import me.niteshh.redcake.command.RedCakeCommand;

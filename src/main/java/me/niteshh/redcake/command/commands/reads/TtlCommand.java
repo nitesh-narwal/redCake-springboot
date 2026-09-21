@@ -1,4 +1,4 @@
-package me.niteshh.redcake.command.commands;
+package me.niteshh.redcake.command.commands.reads;
 
 import lombok.AllArgsConstructor;
 import me.niteshh.redcake.command.RedCakeCommand;
@@ -12,28 +12,28 @@ import java.util.List;
 
 @Component
 @AllArgsConstructor
-public class ExistsCommand implements RedCakeCommand {
+public class TtlCommand implements RedCakeCommand {
+
     private final KeyValueStore store;
 
     @Override
     public String name() {
-        return "EXISTS";
+        return "TTL";
     }
 
     @Override
     public RespValue execute(List<String> arguments) {
 
-        if (arguments.isEmpty()) {
-            return new ErrorValue("wrong number of arguments for 'exists' command");
+        if (arguments.size() != 1) {
+            return new ErrorValue(
+                    "wrong number of arguments for 'ttl' command"
+            );
         }
 
-        long count = 0;
+        String key = arguments.get(0);
 
-        for (String key : arguments) {
-            if (store.exists(key)) {
-                count++;
-            }
-        }
-        return new IntegerValue(count);
+        return new IntegerValue(
+                store.ttl(key)
+        );
     }
 }

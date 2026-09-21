@@ -1,4 +1,4 @@
-package me.niteshh.redcake.command.commands;
+package me.niteshh.redcake.command.commands.reads;
 
 import me.niteshh.redcake.command.RedCakeCommand;
 import me.niteshh.redcake.resp.BulkString;
