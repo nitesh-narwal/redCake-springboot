@@ -54,12 +54,21 @@ public class SetCommand implements RedCakeCommand {
 
             long expiresAt;
 
-            if (option.equals("EX")) {
-                expiresAt = System.currentTimeMillis() + duration * 1000;
-            } else if (option.equals("PX")) { // PX (Per-millisecond) option for expiration time in milliseconds
-                expiresAt = System.currentTimeMillis() + duration;
-            } else {
-                return new ErrorValue("syntax error");
+            try {
+                long durationMillis = option.equals("EX")
+                        ? Math.multiplyExact(duration, 1000)
+                        : duration;
+
+                if (!option.equals("EX") && !option.equals("PX")) {
+                    return new ErrorValue("syntax error");
+                }
+
+                expiresAt = Math.addExact(
+                        System.currentTimeMillis(),
+                        durationMillis
+                );
+            } catch (ArithmeticException e) {
+                return new ErrorValue("invalid expire time");
             }
 
             store.set(key, value, expiresAt);

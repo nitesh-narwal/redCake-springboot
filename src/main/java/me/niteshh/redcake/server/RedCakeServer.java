@@ -1,72 +1,159 @@
 package me.niteshh.redcake.server;
 
-
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import me.niteshh.redcake.config.RedCakeServerConfig;
 import org.springframework.stereotype.Component;
+
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 
 @Component
 public class RedCakeServer {
 
-    private static final int PORT = 6379;
+    private final RedCakeServerConfig serverConfig;
     private final ClientHandler clientHandler;
-    private ServerSocket serverSocket;
+    private final ExecutorService executor =
+            Executors.newVirtualThreadPerTaskExecutor();
+    private final Set<Socket> clients = ConcurrentHashMap.newKeySet();
+    private final Semaphore connectionLimit = new Semaphore(10_000);
 
-    // Create a thread pool to handle client connections concurrently
-    private final ExecutorService executor = Executors.newCachedThreadPool();
+    private volatile ServerSocket serverSocket;
+    private volatile Thread serverThread;
+    private volatile boolean running;
 
-    public RedCakeServer(ClientHandler clientHandler) {
+    public RedCakeServer(
+            ClientHandler clientHandler,
+            RedCakeServerConfig serverConfig
+    ) {
+        this.serverConfig = serverConfig;
         this.clientHandler = clientHandler;
     }
 
     @PostConstruct
-    public void start() {
-        Thread serverThread = new Thread(() -> {
+    public synchronized void start() {
+        if (running) {
+            return;
+        }
+
+        try {
+            ServerSocket socket = new ServerSocket();
+            socket.setReuseAddress(true);
+            socket.bind(
+                    new InetSocketAddress(
+                            serverConfig.getBindAddress(),
+                            serverConfig.getPort()
+                    )
+            );
+
+            serverSocket = socket;
+            running = true;
+            serverThread = Thread.ofPlatform()
+                    .name("RedCakeAcceptThread")
+                    .start(this::acceptClients);
+
+            System.out.println(
+                    "RedCake server started on port "
+                            + serverConfig.getPort()
+            );
+        } catch (Exception e) {
+            closeQuietly(serverSocket);
+            serverSocket = null;
+            throw new IllegalStateException(
+                    "Unable to bind RedCake to port "
+                            + serverConfig.getPort()
+                            + ". The port may already be in use.",
+                    e
+            );
+        }
+    }
+
+    private void acceptClients() {
+        while (running) {
             try {
-                // @ServerSocket primarily waits for incoming connections.
-                this.serverSocket = new ServerSocket(PORT);
-                this.serverSocket.setReuseAddress(true); // Allow the socket to be bound even if a previous connection is in a TIME_WAIT state
-                // means that the socket can be reused immediately after the previous connection is closed,
-                // without waiting for the TIME_WAIT period to expire and without encountering the "Address already in use" error
-                // this means that the server can be restarted quickly without waiting for the operating system to release the port.
-                System.out.println("RedCake server started on port " + PORT);
-
-                while (!this.serverSocket.isClosed()) {
-                    Socket clientSocket = this.serverSocket.accept();  // @Socket represents an individual established connection. @accept() waits for a client to connect.
-                    System.out.println("Client connected: " + clientSocket.getRemoteSocketAddress());
-                    executor.submit(() -> clientHandler.handleClient(clientSocket));
+                Socket clientSocket = serverSocket.accept();
+                if (!connectionLimit.tryAcquire()) {
+                    closeQuietly(clientSocket);
+                    continue;
                 }
+                clients.add(clientSocket);
+
+                executor.submit(() -> {
+                    try {
+                        clientHandler.handleClient(clientSocket);
+                    } finally {
+                        clients.remove(clientSocket);
+                        connectionLimit.release();
+                    }
+                });
             } catch (Exception e) {
-                if (this.serverSocket == null || !this.serverSocket.isClosed()) {
-                    e.printStackTrace();
+                if (running) {
+                    System.err.println(
+                            "Accept loop stopped: " + e.getMessage()
+                    );
                 }
+                return;
             }
-
-        });
-        serverThread.setName("RedCakeServerThread");
-        serverThread.start();
+        }
     }
 
     @PreDestroy
-    public void stop() {
-
-        System.out.println("Stopping RedCake server...");
-
-        try {
-            if (this.serverSocket != null && !this.serverSocket.isClosed()) {
-                this.serverSocket.close();
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
+    public synchronized void stop() {
+        if (!running && serverSocket == null) {
+            return;
         }
 
-        executor.shutdownNow();
+        running = false;
+        closeQuietly(serverSocket);
+        serverSocket = null;
 
+        clients.forEach(this::closeQuietly);
+        clients.clear();
+
+        if (serverThread != null) {
+            try {
+                serverThread.join(2_000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            serverThread = null;
+        }
+
+        executor.close();
         System.out.println("RedCake server stopped.");
     }
 
+    private void closeQuietly(ServerSocket socket) {
+        if (socket == null || socket.isClosed()) {
+            return;
+        }
+
+        try {
+            socket.close();
+        } catch (Exception e) {
+            System.err.println(
+                    "Failed to close server socket: " + e.getMessage()
+            );
+        }
+    }
+
+    private void closeQuietly(Socket socket) {
+        if (socket == null || socket.isClosed()) {
+            return;
+        }
+
+        try {
+            socket.close();
+        } catch (Exception e) {
+            System.err.println(
+                    "Failed to close client socket: " + e.getMessage()
+            );
+        }
+    }
 }

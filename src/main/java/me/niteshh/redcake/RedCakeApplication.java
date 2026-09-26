@@ -9,5 +9,4 @@ public class RedCakeApplication {
     public static void main(String[] args) {
         SpringApplication.run(RedCakeApplication.class, args);
     }
-
 }

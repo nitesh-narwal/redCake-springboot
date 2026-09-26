@@ -1,5 +1,7 @@
 package me.niteshh.redcake.store;
 
+import java.util.function.Consumer;
+
 public interface KeyValueStore {
     void set(String key, String value);
 
@@ -44,4 +46,6 @@ public interface KeyValueStore {
      * @throws InvalidIntegerException if the current value cannot be represented as an integer.
      */
     long increment(String key, long amount);
+
+    void forEachSnapshot(Consumer<SnapshotEntry> consumer);
 }

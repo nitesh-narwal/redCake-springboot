@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 
 class RespParserTest {
@@ -88,5 +89,37 @@ class RespParserTest {
 
         assertEquals(List.of("PING"), first);
         assertEquals(List.of("ECHO", "hello"), second);
+    }
+
+    @Test
+    void shouldRejectCommandWithTooManyElements() {
+        String request = "*129\r\n";
+
+        assertThrows(
+                java.io.IOException.class,
+                () -> new RespParser().parseCommand(
+                        new BufferedInputStream(
+                                new ByteArrayInputStream(
+                                        request.getBytes(StandardCharsets.UTF_8)
+                                )
+                        )
+                )
+        );
+    }
+
+    @Test
+    void shouldRejectBulkStringLargerThanConfiguredLimit() {
+        String request = "*1\r\n$1048577\r\n";
+
+        assertThrows(
+                java.io.IOException.class,
+                () -> new RespParser().parseCommand(
+                        new BufferedInputStream(
+                                new ByteArrayInputStream(
+                                        request.getBytes(StandardCharsets.UTF_8)
+                                )
+                        )
+                )
+        );
     }
 }

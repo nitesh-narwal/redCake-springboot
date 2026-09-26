@@ -7,11 +7,21 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Component
 public class CommandHandler {
+    private static final Set<String> WRITE_COMMANDS = Set.of(
+            "SET",
+            "DEL",
+            "EXPIRE",
+            "INCR",
+            "INCRBY",
+            "DECR",
+            "DECRBY"
+    );
     // The CommandHandler class is responsible for processing and executing commands received from clients.
     // It acts as a bridge between the parsed commands and the underlying logic that performs the requested operations.
     // The class may contain methods to handle different types of commands, validate input, and return appropriate responses to the clients.
@@ -59,6 +69,14 @@ public class CommandHandler {
 
         List<String> arguments = command.subList(1, command.size());
         return redCakeCommand.execute(arguments);
+    }
+
+    public boolean isWriteCommand(List<String> command) {
+        return command != null
+                && !command.isEmpty()
+                && WRITE_COMMANDS.contains(
+                        command.get(0).toUpperCase(Locale.ROOT)
+                );
     }
 
 }

@@ -20,21 +20,19 @@ public class RespWriter {
         }
     }
 
-    private void writeNullValue(OutputStream outputStream) {
-        try {
-            outputStream.write("$-1\r\n".getBytes(StandardCharsets.UTF_8));
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
+    private void writeNullValue(OutputStream outputStream) throws IOException {
+        outputStream.write("$-1\r\n".getBytes(StandardCharsets.US_ASCII));
     }
 
-    private void writeErrorValue(ErrorValue errorValue, OutputStream outputStream) {
-        try {
-            String response = "-" + errorValue.message() + "\r\n";
-            outputStream.write(response.getBytes(StandardCharsets.UTF_8));
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
+    private void writeErrorValue(
+            ErrorValue errorValue,
+            OutputStream outputStream
+    ) throws IOException {
+        String message = errorValue.message()
+                .replace('\r', ' ')
+                .replace('\n', ' ');
+        String response = "-" + message + "\r\n";
+        outputStream.write(response.getBytes(StandardCharsets.UTF_8));
     }
 
     private void writeIntegerValue(IntegerValue integerValue, OutputStream outputStream) throws IOException {

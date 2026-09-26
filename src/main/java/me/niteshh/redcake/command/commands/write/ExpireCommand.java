@@ -40,7 +40,15 @@ public class ExpireCommand implements RedCakeCommand {
             return new ErrorValue("invalid expire time");
         }
 
-        long expiresAt = System.currentTimeMillis() + seconds * 1000;
+        final long expiresAt;
+        try {
+            expiresAt = Math.addExact(
+                    System.currentTimeMillis(),
+                    Math.multiplyExact(seconds, 1000)
+            );
+        } catch (ArithmeticException e) {
+            return new ErrorValue("invalid expire time");
+        }
 
         boolean success = store.expire(key, expiresAt);
 

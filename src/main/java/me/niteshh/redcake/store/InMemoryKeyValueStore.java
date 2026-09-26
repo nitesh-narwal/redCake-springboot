@@ -5,12 +5,15 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 
 @Component
 @RequiredArgsConstructor
 public class InMemoryKeyValueStore implements KeyValueStore {
 
     private final ConcurrentHashMap<String, ValueEntry> data = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Object> keyLocks =
+            new ConcurrentHashMap<>();
 
     private final AtomicLong versionGenerator = new AtomicLong();
 
@@ -279,7 +282,18 @@ public class InMemoryKeyValueStore implements KeyValueStore {
     }
 
     @Override
-    public synchronized long increment(String key, long amount) {
+    public long increment(String key, long amount) {
+        Object keyLock = keyLocks.computeIfAbsent(
+                key,
+                ignored -> new Object()
+        );
+
+        synchronized (keyLock) {
+            return incrementLocked(key, amount);
+        }
+    }
+
+    private long incrementLocked(String key, long amount) {
 
         ValueEntry current = data.get(key);
 
@@ -344,5 +358,26 @@ public class InMemoryKeyValueStore implements KeyValueStore {
             expirationManager.schedule(key, updated.expiresAt(), newVersion);
         }
         return newValue;
+    }
+
+    @Override
+    public void forEachSnapshot(Consumer<SnapshotEntry> consumer) {
+        long now = System.currentTimeMillis();
+
+        data.forEach((key, entry) -> {
+            Long expiresAt = entry.expiresAt();
+            if (expiresAt != null && expiresAt <= now) {
+                data.remove(key, entry);
+                return;
+            }
+
+            consumer.accept(
+                    new SnapshotEntry(
+                            key,
+                            entry.value(),
+                            expiresAt
+                    )
+            );
+        });
     }
 }
