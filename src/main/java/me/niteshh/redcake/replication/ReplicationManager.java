@@ -17,6 +17,11 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 
+/**
+ * Manages the replication process for the RedCake server.
+ * This class handles both primary and replica roles, managing connections,
+ * synchronization, and command replication between the primary and its replicas.
+ */
 @Getter
 @Component
 public class ReplicationManager {

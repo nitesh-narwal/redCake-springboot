@@ -13,6 +13,25 @@ import java.io.OutputStream;
 import java.net.Socket;
 import java.util.List;
 
+/**
+ * Manages the synchronization process between a replica and its primary server.
+ * This class handles connecting to the primary, authenticating if necessary,
+ * and continuously receiving and processing commands from the primary.
+ *
+ * # Job of ReplicaSyncManager
+ *  1. Get the primary server address.
+ *  2. Connect to the primary server.
+ *  3. Authenticate with the primary server if authentication is enabled.
+ *  4. Send a REPLICAHELLO command to the primary server to initiate the replication handshake.
+ *  5. Continuously read commands from the primary server and process them using the CommandHandler.
+ *  6. Handle disconnections and attempt to reconnect to the primary server if the connection is lost.
+ *  7. Provide methods to start and stop the synchronization process, allowing for controlled management of the replication lifecycle.
+ *  8. Ensure thread safety and proper resource management during the synchronization process.
+ *  9. Log relevant information and errors for monitoring and debugging purposes.
+ *  10. Maintain the state of the synchronization process, including whether it is currently running and the status of the connection to the primary server.
+ *  11. Handle any exceptions that may occur during the synchronization process, ensuring that the replica can recover from errors and continue to synchronize with the primary server.
+ *  12. Provide a mechanism for the replica to gracefully shut down the synchronization process, ensuring that resources are released and connections are closed properly.
+ */
 @Component
 public class ReplicaSyncManager {
 

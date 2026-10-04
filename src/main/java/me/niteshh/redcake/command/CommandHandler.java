@@ -34,7 +34,7 @@ public class CommandHandler {
      *          b[i] = commands.get(i);
      *          if ECHO {
      *              return rephrase(b[i + 1]);
-     *            }
+     *          }
      *     }
      *  }
      * */

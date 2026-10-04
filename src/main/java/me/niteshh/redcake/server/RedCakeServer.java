@@ -36,15 +36,21 @@ public class RedCakeServer {
         this.clientHandler = clientHandler;
     }
 
+    /**
+     * Starts the RedCake server.
+     * This method initializes the server socket, binds it to the specified address and port,
+     * and starts a thread to accept incoming client connections.
+     * If the server is already running, this method does nothing.
+     */
     @PostConstruct
-    public synchronized void start() {
+    public synchronized void start() { // synchronized to ensure thread safety when starting the server
         if (running) {
             return;
         }
 
         try {
             ServerSocket socket = new ServerSocket();
-            socket.setReuseAddress(true);
+            socket.setReuseAddress(true); // what is this setReuseAddress(true) do? It allows the socket to be bound to an address that is already in use.
             socket.bind(
                     new InetSocketAddress(
                             serverConfig.getBindAddress(),
@@ -57,28 +63,30 @@ public class RedCakeServer {
             serverThread = Thread.ofPlatform()
                     .name("RedCakeAcceptThread")
                     .start(this::acceptClients);
-
-            System.out.println(
-                    "RedCake server started on port "
-                            + serverConfig.getPort()
-            );
+            System.out.println("RedCake server started on port " + serverConfig.getPort());
         } catch (Exception e) {
             closeQuietly(serverSocket);
             serverSocket = null;
             throw new IllegalStateException(
                     "Unable to bind RedCake to port "
                             + serverConfig.getPort()
-                            + ". The port may already be in use.",
-                    e
+                            + ". The port may already be in use.", e
             );
         }
     }
 
+    /**
+     * Accepts incoming client connections in a loop.
+     * This method runs in a separate thread and continuously listens for new client connections.
+     * When a client connects, it checks if the connection limit has been reached. If not, it adds the client to the set of active clients
+     * and submits a task to handle the client using the provided ClientHandler.
+     * If an exception occurs while accepting connections, it logs the error and stops accepting further connections.
+     */
     private void acceptClients() {
         while (running) {
             try {
-                Socket clientSocket = serverSocket.accept();
-                if (!connectionLimit.tryAcquire()) {
+                Socket clientSocket = serverSocket.accept(); // Accepts a new client connection. This method blocks until a client connects.
+                if (!connectionLimit.tryAcquire()) { // Checks if the connection limit has been reached. If not, it acquires a permit to allow the new connection.
                     closeQuietly(clientSocket);
                     continue;
                 }
@@ -103,6 +111,12 @@ public class RedCakeServer {
         }
     }
 
+    /**
+     * Stops the RedCake server.
+     * This method stops accepting new client connections and closes all active client connections.
+     * It also shuts down the executor service used to handle client requests.
+     * If the server is not running, this method does nothing.
+     */
     @PreDestroy
     public synchronized void stop() {
         if (!running && serverSocket == null) {

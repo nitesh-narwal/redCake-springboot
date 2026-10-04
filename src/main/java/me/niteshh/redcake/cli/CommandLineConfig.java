@@ -1,28 +1,26 @@
 package me.niteshh.redcake.cli;
 
+import lombok.Getter;
 import me.niteshh.redcake.config.RedCakeServerConfig;
 import me.niteshh.redcake.replication.ReplicationConfig;
 import me.niteshh.redcake.replication.ReplicationRole;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.stereotype.Component;
 
+@Getter
 @Component
 public final class CommandLineConfig {
+
     private static final int DEFAULT_PORT = 6379;
 
     private final RedCakeServerConfig serverConfig;
 
     private final ReplicationConfig replicationConfig;
+
     private final String apiKey;
 
-    public CommandLineConfig(
-            ApplicationArguments arguments
-    ) {
-
-        ParsedArguments parsed =
-                parse(
-                        arguments.getSourceArgs()
-                );
+    public CommandLineConfig(ApplicationArguments arguments) {
+        ParsedArguments parsed = parse(arguments.getSourceArgs());
 
         this.serverConfig =
                 new RedCakeServerConfig(
@@ -39,29 +37,13 @@ public final class CommandLineConfig {
         this.apiKey = parsed.apiKey();
     }
 
-    public RedCakeServerConfig getServerConfig() {
-        return serverConfig;
-    }
-
-    public ReplicationConfig getReplicationConfig() {
-        return replicationConfig;
-    }
-
-    public String getApiKey() {
-        return apiKey;
-    }
-
-    private ParsedArguments parse(
-            String[] args
-    ) {
+    private ParsedArguments parse(String[] args) {
 
         int port = DEFAULT_PORT;
-        String bindAddress =
-                RedCakeServerConfig.DEFAULT_BIND_ADDRESS;
+        String bindAddress = RedCakeServerConfig.DEFAULT_BIND_ADDRESS;
         String apiKey = System.getenv("REDCAKE_API_KEY");
 
-        ReplicationRole role =
-                ReplicationRole.PRIMARY;
+        ReplicationRole role = ReplicationRole.PRIMARY;
 
         String primaryHost = null;
 
@@ -77,100 +59,65 @@ public final class CommandLineConfig {
 
                 case "--port" -> {
                     if (portSpecified) {
-                        throw new IllegalArgumentException(
-                                "--port may only be specified once"
-                        );
+                        throw new IllegalArgumentException("--port may only be specified once");
                     }
 
                     if (i + 1 >= args.length) {
-
-                        throw new IllegalArgumentException(
-                                "--port requires a value"
-                        );
+                        throw new IllegalArgumentException("--port requires a value");
                     }
 
                     portSpecified = true;
-                    port =
-                            parsePort(
-                                    args[++i],
-                                    "--port"
-                            );
+                    port = parsePort(args[++i], "--port");
                 }
 
                 case "--bind" -> {
                     if (i + 1 >= args.length) {
-                        throw new IllegalArgumentException(
-                                "--bind requires an address"
-                        );
+                        throw new IllegalArgumentException("--bind requires an address");
                     }
 
                     bindAddress = args[++i];
                     if (bindAddress.isBlank()) {
-                        throw new IllegalArgumentException(
-                                "--bind requires a non-empty address"
-                        );
+                        throw new IllegalArgumentException("--bind requires a non-empty address");
                     }
                 }
 
                 case "--api-key" -> {
                     if (i + 1 >= args.length) {
-                        throw new IllegalArgumentException(
-                                "--api-key requires a value"
-                        );
+                        throw new IllegalArgumentException("--api-key requires a value");
                     }
 
                     apiKey = args[++i];
                     if (apiKey.isBlank()) {
-                        throw new IllegalArgumentException(
-                                "--api-key must not be empty"
-                        );
+                        throw new IllegalArgumentException("--api-key must not be empty");
                     }
                 }
 
                 case "--replicaof" -> {
                     if (replicaOfSpecified) {
-                        throw new IllegalArgumentException(
-                                "--replicaof may only be specified once"
-                        );
+                        throw new IllegalArgumentException("--replicaof may only be specified once");
                     }
 
                     if (i + 2 >= args.length) {
-
-                        throw new IllegalArgumentException(
-                                "--replicaof requires "
-                                        + "<host> <port>"
-                        );
+                        throw new IllegalArgumentException("--replicaof requires " + "<host> <port>");
                     }
 
                     replicaOfSpecified = true;
-                    primaryHost =
-                            args[++i];
+                    primaryHost = args[++i];
 
                     if (primaryHost.isBlank()) {
-                        throw new IllegalArgumentException(
-                                "Primary host must not be empty"
-                        );
+                        throw new IllegalArgumentException("Primary host must not be empty");
                     }
 
-                    primaryPort =
-                            parsePort(
-                                    args[++i],
-                                    "--replicaof"
-                            );
-
-                    role =
-                            ReplicationRole.REPLICA;
+                    primaryPort = parsePort(args[++i], "--replicaof");
+                    role = ReplicationRole.REPLICA;
                 }
 
                 case "--help", "-h" -> {
-
                     printUsage();
-
                     throw new SystemExitException();
                 }
 
                 default -> {
-
                     throw new IllegalArgumentException(
                             "Unknown argument: "
                                     + argument
@@ -189,20 +136,11 @@ public final class CommandLineConfig {
         );
     }
 
-    private int parsePort(
-            String value,
-            String option
-    ) {
-
+    private int parsePort(String value, String option) {
         final int port;
-
         try {
-
-            port =
-                    Integer.parseInt(value);
-
+            port = Integer.parseInt(value);
         } catch (NumberFormatException e) {
-
             throw new IllegalArgumentException(
                     option
                             + " requires a valid port: "
@@ -211,10 +149,7 @@ public final class CommandLineConfig {
         }
 
         if (port < 1 || port > 65535) {
-
-            throw new IllegalArgumentException(
-                    "Port must be between 1 and 65535"
-            );
+            throw new IllegalArgumentException("Port must be between 1 and 65535");
         }
 
         return port;

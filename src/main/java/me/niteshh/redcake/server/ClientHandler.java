@@ -40,8 +40,7 @@ public class ClientHandler {
 
     public void handleClient(Socket clientSocket) {
         try (clientSocket) {
-            BufferedInputStream input =
-                    new BufferedInputStream(clientSocket.getInputStream());
+            BufferedInputStream input = new BufferedInputStream(clientSocket.getInputStream());
             OutputStream output = clientSocket.getOutputStream();
             boolean authenticated = !authConfig.isEnabled();
 
@@ -53,8 +52,7 @@ public class ClientHandler {
                 }
 
                 if (isAuthCommand(command)) {
-                    boolean valid = command.size() == 2
-                            && authConfig.matches(command.get(1));
+                    boolean valid = command.size() == 2 && authConfig.matches(command.get(1));
                     authenticated = valid;
                     respWriter.write(
                             valid

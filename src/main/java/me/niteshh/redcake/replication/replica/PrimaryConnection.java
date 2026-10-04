@@ -4,13 +4,16 @@ import org.springframework.stereotype.Component;
 import java.net.Socket;
 import java.net.InetSocketAddress;
 
+/**
+ * Manages the connection to the primary server for replication purposes.
+ * This class handles establishing and maintaining a connection to the primary server,
+ * allowing the replica to receive updates and synchronize its state.
+ */
 @Component
 public class PrimaryConnection {
 
     private Socket socket;
-
     private String host;
-
     private int port;
 
     public synchronized void connect(String host, int port) {

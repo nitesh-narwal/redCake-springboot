@@ -4,6 +4,9 @@ import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+/**
+ * Utility class for encoding commands in the Redis Serialization Protocol (RESP) format.
+ */
 public final class RespCommandCodec {
 
     private RespCommandCodec() {

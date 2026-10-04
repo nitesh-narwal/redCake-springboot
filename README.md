@@ -19,6 +19,7 @@ provide durable storage, TLS, or coordinator-backed automatic failover.
 - Pipelined commands on a single TCP connection.
 - Commands:
   - `PING`
+  - `INFO`
   - `ECHO`
   - `SET`
   - `GET`
@@ -164,6 +165,22 @@ Startup rejects:
 6. The command operates on `InMemoryKeyValueStore`.
 7. `RespWriter` writes the response and the connection remains available for
    additional pipelined commands.
+
+### INFO
+
+`INFO` returns a RESP bulk string containing server, replication, and keyspace
+details:
+
+```bash
+redis-cli -p 6379 INFO
+redis-cli -p 6379 INFO replication
+redis-cli -p 6379 INFO keyspace
+```
+
+Supported sections are `server`, `replication`, and `keyspace`. Unknown
+sections return an empty response, matching Redis-style section handling.
+The replication section includes the instance's `master_replid` and its
+current `master_repl_offset`.
 
 TCP does not preserve message boundaries, so the parser continuously reads
 frames instead of assuming that one socket read contains one command.
