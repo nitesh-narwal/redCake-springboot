@@ -1,0 +1,38 @@
+# systemd unit for RedCake.  Install:
+#   sudo useradd --system --home /var/lib/redcake --shell /usr/sbin/nologin redcake
+#   sudo install -d -o redcake -g redcake /var/lib/redcake /etc/redcake
+#   sudo cp redCake-*.jar /opt/redcake/redcake.jar
+#   echo 'REDCAKE_API_KEY=<long random secret>' | sudo tee /etc/redcake/env && sudo chmod 600 /etc/redcake/env
+#   sudo cp deploy/redcake.service /etc/systemd/system/ && sudo systemctl enable --now redcake
+[Unit]
+Description=RedCake in-memory data store
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=redcake
+Group=redcake
+EnvironmentFile=/etc/redcake/env
+WorkingDirectory=/var/lib/redcake
+ExecStart=/usr/bin/java -XX:+UseZGC -XX:MaxRAMPercentage=75 -jar /opt/redcake/redcake.jar \
+    --config /etc/redcake/redcake.conf
+Restart=on-failure
+RestartSec=2
+# SHUTDOWN/SIGTERM flushes the append-only file; give it time on big datasets.
+TimeoutStopSec=30
+LimitNOFILE=65535
+
+# Sandboxing
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/redcake
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

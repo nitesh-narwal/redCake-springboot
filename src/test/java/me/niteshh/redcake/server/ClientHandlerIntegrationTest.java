@@ -89,7 +89,7 @@ class ClientHandlerIntegrationTest {
             assertResponse(connection, "-NOAUTH authentication required\r\n");
 
             send(connection, "AUTH", "wrong");
-            assertResponse(connection, "-invalid API key\r\n");
+            assertResponse(connection, "-WRONGPASS invalid username-password pair or user is disabled\r\n");
 
             send(connection, "AUTH", "secret");
             assertResponse(connection, "+OK\r\n");
@@ -133,13 +133,13 @@ class ClientHandlerIntegrationTest {
 
             assertTrue(response.startsWith("$"));
             assertTrue(response.contains("# Server\r\n"));
-            assertTrue(response.contains("redcake_version:0.0.1\r\n"));
+            assertTrue(response.contains("redcake_version:0.2.0\r\n"));
             assertTrue(response.contains("# Replication\r\n"));
             assertTrue(response.contains("role:primary\r\n"));
             assertTrue(response.matches("(?s).*master_replid:[0-9a-f]{40}\\r\\n.*"));
             assertTrue(response.contains("master_repl_offset:0\r\n"));
             assertTrue(response.contains("# Keyspace\r\n"));
-            assertTrue(response.contains("db0:keys=1\r\n"));
+            assertTrue(response.contains("db0:keys=1,expires=0\r\n"));
         }
     }
 
@@ -214,7 +214,6 @@ class ClientHandlerIntegrationTest {
         ReplicationManager replicationManager = new ReplicationManager(
                 new ReplicationConfig(role, "127.0.0.1", 6379),
                 new ReplicaManager(),
-                mock(PrimaryConnection.class),
                 mock(ReplicaSyncManager.class),
                 store
         );

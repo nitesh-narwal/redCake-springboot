@@ -12,20 +12,7 @@
     <artifactId>redCake</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>redCake</name>
-    <description>redCake</description>
-    <url/>
-    <licenses>
-        <license/>
-    </licenses>
-    <developers>
-        <developer/>
-    </developers>
-    <scm>
-        <connection/>
-        <developerConnection/>
-        <tag/>
-        <url/>
-    </scm>
+    <description>RedCake - a Redis-compatible in-memory key-value server with replication and AOF persistence</description>
     <properties>
         <java.version>21</java.version>
     </properties>
@@ -71,5 +58,54 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!--
+            Coverage gate:  ./mvnw -Pcoverage verify
+            Needs network access to resolve the JaCoCo plugin (not part of the default offline build).
+            NOTE: written against JaCoCo 0.8.12 but not executed in the authoring environment (no network).
+        -->
+        <profile>
+            <id>coverage</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.jacoco</groupId>
+                        <artifactId>jacoco-maven-plugin</artifactId>
+                        <version>0.8.12</version>
+                        <executions>
+                            <execution>
+                                <goals><goal>prepare-agent</goal></goals>
+                            </execution>
+                            <execution>
+                                <id>report</id>
+                                <phase>verify</phase>
+                                <goals><goal>report</goal></goals>
+                            </execution>
+                            <execution>
+                                <id>check</id>
+                                <phase>verify</phase>
+                                <goals><goal>check</goal></goals>
+                                <configuration>
+                                    <rules>
+                                        <rule>
+                                            <element>BUNDLE</element>
+                                            <limits>
+                                                <limit>
+                                                    <counter>LINE</counter>
+                                                    <value>COVEREDRATIO</value>
+                                                    <minimum>0.75</minimum>
+                                                </limit>
+                                            </limits>
+                                        </rule>
+                                    </rules>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 
 </project>

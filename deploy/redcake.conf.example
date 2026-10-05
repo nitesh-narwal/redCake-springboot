@@ -1,0 +1,30 @@
+# RedCake configuration file. Same options as the command line, without the leading "--".
+# Command-line options override this file.  Secrets do NOT belong here: use REDCAKE_API_KEY,
+# --api-key-file and the *-password-file options.
+
+port 6379
+bind 0.0.0.0
+max-clients 10000
+timeout 300
+
+# Persistence
+aof-file /var/lib/redcake/redcake.aof
+aof-fsync everysec
+
+# Memory
+maxmemory 1gb
+maxmemory-policy allkeys-random
+
+# Security
+acl-file /etc/redcake/users.acl
+tls-keystore /etc/redcake/server.p12
+tls-keystore-password-file /etc/redcake/keystore.pass
+
+# Observability
+metrics-port 9100
+slowlog-threshold-us 10000
+
+# Replication (uncomment on a replica)
+# replicaof 10.0.0.5 6379
+# tls-replication yes
+repl-backlog-size 16mb

@@ -40,33 +40,39 @@ class ReplicationManagerSnapshotTest {
             return null;
         }).when(store).forEachSnapshot(any());
 
+        ReplicaManager replicas = new ReplicaManager();
         ReplicationManager manager = new ReplicationManager(
                 new ReplicationConfig(
                         ReplicationRole.PRIMARY,
                         null,
                         6379
                 ),
-                new ReplicaManager(),
-                mock(PrimaryConnection.class),
+                replicas,
                 mock(ReplicaSyncManager.class),
                 store
         );
 
-        manager.registerReplicaAndSendSnapshot(
-                new TestSocket(output)
+        manager.registerReplica(
+                new TestSocket(output), "?", -1, 0
         );
 
         manager.replicate(
                 List.of("SET", "live", "live-value")
         );
+        assertTrue(
+                replicas.getReplicas().getFirst().awaitIdle(2_000),
+                "live write was not flushed"
+        );
 
+        List<List<String>> stream = parseCommands(output.toByteArray());
+        assertEquals("FULLRESYNC", stream.get(0).get(1));
         assertEquals(
                 List.of(
-                        List.of("REPLICAHELLO", "OK"),
                         List.of("SET", "existing", "snapshot-value"),
+                        List.of("REPLICAHELLO", "SYNCED"),
                         List.of("SET", "live", "live-value")
                 ),
-                parseCommands(output.toByteArray())
+                stream.subList(1, stream.size())
         );
     }
 

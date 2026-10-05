@@ -1,0 +1,6 @@
+# Scrape config used by docker-compose --profile monitoring
+scrape_configs:
+  - job_name: redcake
+    scrape_interval: 10s
+    static_configs:
+      - targets: ["primary:9100", "replica1:9100", "replica2:9100"]

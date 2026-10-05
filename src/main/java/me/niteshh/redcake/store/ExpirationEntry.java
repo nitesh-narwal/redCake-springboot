@@ -1,6 +1,10 @@
 package me.niteshh.redcake.store;
 
-public record ExpirationEntry (String key,
-                               long expiresAt,
-                               long version) {
+/**
+ * A scheduled expiration: "delete {@code key} at {@code expiresAt} if it still
+ * has write-stamp {@code version}".
+ */
+public record ExpirationEntry(String key,
+                              long expiresAt,
+                              long version) {
 }

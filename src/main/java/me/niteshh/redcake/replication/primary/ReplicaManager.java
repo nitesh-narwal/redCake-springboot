@@ -1,5 +1,6 @@
 package me.niteshh.redcake.replication.primary;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -10,76 +11,60 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 /**
- * Manages the primary replica connections.
- * This allows one primary to support N replicas.
+ * Registry of the replicas attached to this primary (one primary supports
+ * any number of replicas). All operations are thread-safe.
  */
+@Slf4j
 @Component
 public class ReplicaManager {
 
     private final Map<String, ReplicaConnection> replicaConnections = new ConcurrentHashMap<>();
 
-    public void register( ReplicaConnection replica) {
-        try{
-            replicaConnections.put(replica.getReplicaId(), replica);
-            System.out.println("Replica registered: " + replica.getReplicaId());
-        } catch (Exception e) {
-            System.err.println("Error registering replica: " + replica.getReplicaId());
-            e.printStackTrace();
-        }
+    /**
+     * Adds a replica and arranges for it to be removed automatically if its
+     * writer thread hits an I/O error.
+     */
+    public void register(ReplicaConnection replica) {
+        replica.setFailureListener(failed -> unregister(failed.getReplicaId()));
+        replicaConnections.put(replica.getReplicaId(), replica);
+        log.info("Replica registered: {}", replica.getReplicaId());
     }
 
-    public void broadcast(
-            byte[] command,
-            Consumer<ReplicaConnection> onFailure
-    ) {
+    /**
+     * Queues {@code command} on every replica. Never blocks on network I/O
+     * (see {@link ReplicaConnection#send}); replicas that cannot accept it
+     * are reported to {@code onFailure}.
+     */
+    public void broadcast(byte[] command, Consumer<ReplicaConnection> onFailure) {
         for (ReplicaConnection replica : replicaConnections.values()) {
             try {
                 replica.send(command);
             } catch (Exception e) {
+                log.warn("Dropping replica {}: {}", replica.getReplicaId(), e.getMessage());
                 onFailure.accept(replica);
             }
         }
     }
 
+    /** Removes and closes a replica; harmless if it is already gone. */
     public void unregister(String replicaId) {
-        try{
-            ReplicaConnection removed = replicaConnections.remove(replicaId);
-            if (removed != null) {
-                removed.close();
-                System.out.println("Replica unregistered: " + replicaId);
-            } else {
-                System.out.println("No replica found with ID: " + replicaId);
-            }
-        } catch (Exception e) {
-            System.err.println("Error unregistering replica: " + replicaId);
-            e.printStackTrace();
+        ReplicaConnection removed = replicaConnections.remove(replicaId);
+        if (removed != null) {
+            removed.close();
+            log.info("Replica unregistered: {}", replicaId);
         }
     }
 
-    public ReplicaConnection getReplica(String replicaId) {
-        try {
-            return replicaConnections.get(replicaId);
-        } catch (Exception e) {
-            System.err.println("Error getting replica: " + replicaId);
-            e.printStackTrace();
-            return null;
-        }
-    }
-
+    /** @return a snapshot copy of the current replicas */
     public List<ReplicaConnection> getReplicas() {
-        return Collections.unmodifiableList(
-                new ArrayList<>(replicaConnections.values())
-        );
+        return Collections.unmodifiableList(new ArrayList<>(replicaConnections.values()));
     }
 
     public int replicaCount() {
         return replicaConnections.size();
     }
 
-    public boolean contains(String replicaId) {
-        return replicaConnections.containsKey(replicaId);
-    }
-
+    /** Closes every replica (server shutdown). */
     public void closeAll() {
         for (ReplicaConnection replica : replicaConnections.values()) {
             replica.close();

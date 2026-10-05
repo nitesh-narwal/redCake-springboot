@@ -51,6 +51,7 @@ class ReplicaConnectionTest {
         replica.send(liveWrite);
         output.allowWrites.countDown();
         snapshotThread.join(2_000);
+        assertTrue(replica.awaitIdle(2_000), "queued writes were not flushed");
 
         assertEquals(
                 List.of(
@@ -83,6 +84,7 @@ class ReplicaConnectionTest {
                         List.of("SET", "key", "live")
                 )
         );
+        assertTrue(replica.awaitIdle(2_000), "live write was not flushed");
 
         assertEquals(
                 List.of(

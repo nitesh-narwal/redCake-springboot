@@ -12,7 +12,11 @@ class RedCakeAuthConfigTest {
         RedCakeAuthConfig config = new RedCakeAuthConfig("secret-ä");
 
         assertTrue(config.isEnabled());
-        assertTrue(config.matches("secret-ä"));
+        // Clients send bytes; the parser turns them into a byte-string (Latin-1 view of UTF-8).
+        String onTheWire = new String("secret-ä".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                java.nio.charset.StandardCharsets.ISO_8859_1);
+        assertTrue(config.matches(onTheWire));
+        assertFalse(config.matches("secret-ä")); // a decoded Unicode string is not the wire form
         assertFalse(config.matches("secret-a"));
         assertFalse(config.matches(null));
     }

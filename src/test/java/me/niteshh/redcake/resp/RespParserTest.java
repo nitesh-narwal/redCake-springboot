@@ -3,10 +3,12 @@ package me.niteshh.redcake.resp;
 import org.junit.jupiter.api.Test;
 
 import java.io.BufferedInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -93,7 +95,7 @@ class RespParserTest {
 
     @Test
     void shouldRejectCommandWithTooManyElements() {
-        String request = "*129\r\n";
+        String request = "*1025\r\n";
 
         assertThrows(
                 java.io.IOException.class,
@@ -121,5 +123,54 @@ class RespParserTest {
                         )
                 )
         );
+    }
+
+    @Test
+    void shouldParseInlineCommandsForTelnetAndNc() throws Exception {
+        BufferedInputStream input = new BufferedInputStream(
+                new ByteArrayInputStream("\r\nSET  a   b\r\nPING\n".getBytes(StandardCharsets.UTF_8)));
+        RespParser parser = new RespParser();
+
+        assertEquals(List.of("SET", "a", "b"), parser.parseClientCommand(input));
+        assertEquals(List.of("PING"), parser.parseClientCommand(input));
+        org.junit.jupiter.api.Assertions.assertNull(parser.parseClientCommand(input));
+    }
+
+    @Test
+    void strictParserStillRejectsInlineText() {
+        assertThrows(
+                ProtocolException.class,
+                () -> new RespParser().parseCommand(new BufferedInputStream(
+                        new ByteArrayInputStream("PING\r\n".getBytes(StandardCharsets.UTF_8)))));
+    }
+
+    @Test
+    void shouldRejectMalformedFramingWithProtocolException() {
+        for (String bad : List.of("*1\r\n$abc\r\n", "*1\r\n$3\r\nabcXX", "*-1\r\n", "*1\r\n+oops\r\n",
+                "*1\r\n$99999999999\r\n")) {
+            assertThrows(
+                    java.io.IOException.class,
+                    () -> new RespParser().parseCommand(new BufferedInputStream(
+                            new ByteArrayInputStream(bad.getBytes(StandardCharsets.UTF_8)))),
+                    bad);
+        }
+    }
+
+    @Test
+    void everyByteValueSurvivesParsingUnchanged() throws Exception {
+        byte[] all = new byte[256];
+        for (int i = 0; i < 256; i++) {
+            all[i] = (byte) i;
+        }
+        ByteArrayOutputStream request = new ByteArrayOutputStream();
+        request.writeBytes("*2\r\n$3\r\nSET\r\n$256\r\n".getBytes(StandardCharsets.ISO_8859_1));
+        request.writeBytes(all);
+        request.writeBytes("\r\n".getBytes(StandardCharsets.ISO_8859_1));
+
+        List<String> parsed = new RespParser().parseCommand(
+                new BufferedInputStream(new ByteArrayInputStream(request.toByteArray())));
+
+        assertEquals(256, parsed.get(1).length());
+        assertArrayEquals(all, parsed.get(1).getBytes(StandardCharsets.ISO_8859_1));
     }
 }

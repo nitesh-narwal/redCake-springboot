@@ -1,0 +1,45 @@
+# One primary + two replicas.  Start with:
+#   REDCAKE_API_KEY=change-me docker compose up --build
+# Then:
+#   redis-cli -p 6379 -a change-me SET hello world
+#   redis-cli -p 6381 -a change-me GET hello      # served by replica 1
+services:
+  primary:
+    build: .
+    environment:
+      REDCAKE_API_KEY: ${REDCAKE_API_KEY:?set REDCAKE_API_KEY}
+    command: ["--aof-file", "/data/redcake.aof", "--aof-fsync", "everysec", "--metrics-port", "9100"]
+    ports: ["6379:6379", "9100:9100"]
+    volumes: ["primary-data:/data"]
+
+  replica1:
+    build: .
+    environment:
+      REDCAKE_API_KEY: ${REDCAKE_API_KEY:?set REDCAKE_API_KEY}
+    command: ["--replicaof", "primary", "6379", "--metrics-port", "9100"]
+    depends_on: [primary]
+    ports: ["6381:6379"]
+
+  replica2:
+    build: .
+    environment:
+      REDCAKE_API_KEY: ${REDCAKE_API_KEY:?set REDCAKE_API_KEY}
+    command: ["--replicaof", "primary", "6379", "--metrics-port", "9100"]
+    depends_on: [primary]
+    ports: ["6382:6379"]
+
+volumes:
+  primary-data:
+
+# Optional monitoring:  docker compose --profile monitoring up
+#   prometheus -> http://localhost:9090      grafana -> http://localhost:3000 (import deploy/grafana-dashboard.json)
+  prometheus:
+    image: prom/prometheus:latest
+    profiles: ["monitoring"]
+    volumes: ["./deploy/prometheus-compose.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:latest
+    profiles: ["monitoring"]
+    ports: ["3000:3000"]

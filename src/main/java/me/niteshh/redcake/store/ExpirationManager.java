@@ -2,85 +2,148 @@ package me.niteshh.redcake.store;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
-import lombok.RequiredArgsConstructor;
 import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.Comparator;
-import java.util.PriorityQueue;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.TreeSet;
 import java.util.function.Consumer;
 
+/**
+ * Active expiration: a background thread that deletes keys when their TTL
+ * elapses, even if nobody reads them (lazy expiry alone would leak memory for
+ * keys that are written once and never touched again).
+ *
+ * <p><b>One entry per key.</b> The schedule is a {@link TreeSet} ordered by
+ * deadline plus a {@code key -> entry} index. Re-scheduling a key replaces its
+ * previous entry, and {@link #cancel} removes it. The old implementation used
+ * a plain priority queue and added a new entry on every {@code SET ... EX},
+ * {@code EXPIRE} and {@code INCR}, so stale entries piled up until their
+ * deadline - memory grew with the number of <em>writes</em>, now it only grows
+ * with the number of keys that currently have a TTL.
+ *
+ * <p>Thread-safety: all structure access happens under {@link #lock}. The
+ * worker releases the lock before invoking the handler so a slow handler never
+ * blocks writers calling {@link #schedule}.
+ */
+@Slf4j
 @Component
-@RequiredArgsConstructor
 public class ExpirationManager {
 
-    private final PriorityQueue<ExpirationEntry> queue = new PriorityQueue<>(
+    /** Earliest deadline first; key/version break ties so entries stay distinct. */
+    private static final Comparator<ExpirationEntry> ORDER =
             Comparator.comparingLong(ExpirationEntry::expiresAt)
-    );
+                    .thenComparing(ExpirationEntry::key)
+                    .thenComparingLong(ExpirationEntry::version);
 
+    private final TreeSet<ExpirationEntry> queue = new TreeSet<>(ORDER);
+    private final Map<String, ExpirationEntry> byKey = new HashMap<>();
     private final Object lock = new Object();
 
-    private volatile boolean running = true;  // Flag to control the running state of the expiration thread and ensure visibility across threads
+    /** Cleared by {@link #stop()}; volatile so the worker sees it promptly. */
+    private volatile boolean running = true;
 
     private Thread workerThread;
 
-
+    /** Invoked (outside the lock) for every due entry; set by the store. */
     @Setter
-    private Consumer<ExpirationEntry> expirationHandler;
+    private volatile Consumer<ExpirationEntry> expirationHandler;
 
+    /**
+     * Schedules (or re-schedules) expiry of {@code key}. Any earlier schedule
+     * for the same key is discarded.
+     */
     public void schedule(String key, long expiresAt, long version) {
-
+        ExpirationEntry entry = new ExpirationEntry(key, expiresAt, version);
         synchronized (lock) {
-            queue.offer(new ExpirationEntry(key, expiresAt, version));  // Add the new expiration entry to the priority queue
-
-            /*
-             * Wake the worker because the newly
-             * inserted expiration may be earlier
-             * than the current queue head.
-             */
+            ExpirationEntry previous = byKey.put(key, entry);
+            if (previous != null) {
+                queue.remove(previous);
+            }
+            queue.add(entry);
+            // The new entry may be earlier than the one the worker sleeps on.
             lock.notifyAll();
+        }
+    }
+
+    /** Forgets the schedule of {@code key} (key deleted, persisted or overwritten without TTL). */
+    public void cancel(String key) {
+        synchronized (lock) {
+            ExpirationEntry previous = byKey.remove(key);
+            if (previous != null) {
+                queue.remove(previous);
+            }
+        }
+    }
+
+    /** Drops every schedule (used by FLUSHALL and replica full-resync). */
+    public void clear() {
+        synchronized (lock) {
+            queue.clear();
+            byKey.clear();
+        }
+    }
+
+    /**
+     * @return the key whose TTL ends first, or {@code null} if no key has a
+     * TTL. Used by the {@code volatile-ttl} eviction policy.
+     */
+    public String earliestKey() {
+        synchronized (lock) {
+            return queue.isEmpty() ? null : queue.first().key();
+        }
+    }
+
+    /** @return number of keys that currently have a pending expiration */
+    public int size() {
+        synchronized (lock) {
+            return byKey.size();
         }
     }
 
     @PostConstruct
     public void start() {
         workerThread = new Thread(this::expirationLoop, "RedCake-ExpirationThread");
+        workerThread.setDaemon(true);
         workerThread.start();
     }
 
+    /** Worker loop: sleep until the earliest deadline, then hand the entry to the handler. */
     private void expirationLoop() {
         while (running) {
-            try{
+            try {
                 ExpirationEntry entry;
                 synchronized (lock) {
                     while (queue.isEmpty() && running) {
-                        lock.wait();  // Wait until there is an expiration entry to process or the manager is stopped
+                        lock.wait();
                     }
-
                     if (!running) {
-                        break;  // Exit the loop if the manager is stopped
+                        break;
                     }
 
-                    entry = queue.peek();  // Get the earliest expiration entry without removing it
-
+                    entry = queue.first();
                     long now = System.currentTimeMillis();
                     if (entry.expiresAt() > now) {
-                        lock.wait(entry.expiresAt() - now);  // Wait until the key is due to expire
-                        continue;  // Re-evaluate the queue after waking up
+                        lock.wait(entry.expiresAt() - now);
+                        continue; // re-evaluate: head may have changed while sleeping
                     }
 
-                    queue.poll();  // Remove the expired entry from the queue
+                    queue.pollFirst();
+                    byKey.remove(entry.key(), entry);
                 }
 
                 Consumer<ExpirationEntry> handler = expirationHandler;
                 if (handler != null) {
                     handler.accept(entry);
                 }
-            }catch (InterruptedException e) {
+            } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;
-            }catch (Exception e){
-                System.err.println("Expiration worker error: " + e.getMessage());
+            } catch (Exception e) {
+                log.error("Expiration worker error", e);
             }
         }
     }
@@ -91,7 +154,6 @@ public class ExpirationManager {
         synchronized (lock) {
             lock.notifyAll();
         }
-
         if (workerThread != null) {
             workerThread.interrupt();
         }

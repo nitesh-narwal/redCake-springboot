@@ -31,3 +31,10 @@ build/
 
 ### VS Code ###
 .vscode/
+.claude
+CHANGELOG.md
+CONTRIBUTING.md
+CLAUDE.md
+graphify-out
+
+.gitignore
