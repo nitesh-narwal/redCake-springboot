@@ -20,6 +20,9 @@ accidental exposure and untrusted *protocol input*, not against a hostile authen
 | Slow-client (slowloris) | `--timeout`, 15 s authentication deadline |
 | Secret leakage | API key via `REDCAKE_API_KEY` / `--api-key-file`; TLS passwords via files/env; ACL file stores only SHA-256 digests; `CONFIG GET` never returns secrets; `AUTH` is never written to the slow log or `MONITOR` |
 | Log injection | Error text is stripped of CR/LF; client data is never logged |
+| Two writers after a partition (split brain, cluster mode) | A primary writes only while it owns ZooKeeper's `/leader` znode **and** its lease (2/3 of the session timeout) is fresh, checked inside the write lock for every write; it stops *before* a successor can be elected, refuses `PSYNC`, then steps down (ADR 0005) |
+| Stale data resurrected after a total outage (cluster mode) | `<aof>.epoch` records which leader epoch an AOF belongs to; the election refuses a persistent node whose data is older than the cluster's epoch |
+| Rogue node pretending to be the primary (cluster mode) | Only a node that holds the ephemeral `/leader` znode is followed; protect the znodes with `--zk-auth-file` (digest ACLs), and replication links with `--api-key` / `--tls-replication` |
 
 ## Known gaps — read before exposing RedCake
 * The ACL has three roles, not per-key or per-command rules. Passwords are single SHA-256 digests (fast to
@@ -28,7 +31,10 @@ accidental exposure and untrusted *protocol input*, not against a hostile authen
   and sizes, never keys or values. Bind to loopback or firewall the port.
 * Pub/Sub delivery runs on the publisher's thread: a subscriber that stops reading can slow publishers.
 * No audit log of administrative commands (use `MONITOR` / `SLOWLOG` for ad-hoc inspection).
-* No automatic failover: a partitioned primary keeps accepting writes until an operator intervenes.
+* Without `--zk-connect` there is no automatic failover: a partitioned primary keeps accepting writes until an operator intervenes.
+  With it, ZooKeeper becomes part of the trust base: whoever can write its znodes can choose the primary and read node
+  addresses. Keep ZooKeeper on a trusted network, enable digest ACLs (`--zk-auth-file` / `REDCAKE_ZK_AUTH`), and note that RedCake does
+  not encrypt its ZooKeeper connection itself.
 * Not hardened against a malicious *replica operator* — a replica with the API key can read everything.
 
 ## Hardening checklist

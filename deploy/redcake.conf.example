@@ -28,3 +28,15 @@ slowlog-threshold-us 10000
 # replicaof 10.0.0.5 6379
 # tls-replication yes
 repl-backlog-size 16mb
+
+# Automatic failover with ZooKeeper (every node gets the same file except node-id/advertise-host).
+# Excludes "replicaof": ZooKeeper decides which node is the primary. See docs/adr/0005-zookeeper-failover.md.
+# zk-connect zk1:2181,zk2:2181,zk3:2181
+# cluster-name redcake
+# advertise-host node1.example.com
+# node-id node1
+# replica-priority 100
+# zk-session-timeout-ms 10000
+# cluster-election-delay-ms 1000
+# min-replicas-to-write 1
+# ZooKeeper credentials (user:password) belong in REDCAKE_ZK_AUTH or --zk-auth-file, not in this file.

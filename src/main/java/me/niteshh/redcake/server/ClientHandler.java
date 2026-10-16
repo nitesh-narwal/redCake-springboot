@@ -1,6 +1,7 @@
 package me.niteshh.redcake.server;
 
 import lombok.extern.slf4j.Slf4j;
+import me.niteshh.redcake.cluster.ClusterState;
 import me.niteshh.redcake.command.CommandHandler;
 import me.niteshh.redcake.command.CommandSupport;
 import me.niteshh.redcake.command.RedCakeCommand;
@@ -49,8 +50,10 @@ import java.util.Set;
  *       {@code (P)SUBSCRIBE/(P)UNSUBSCRIBE}, {@code CLIENT}, {@code ACL}, {@code MONITOR}.</li>
  *   <li>Everything else goes through {@link #execute}: <b>reads</b> run lock-free and in
  *       parallel; <b>writes</b> on a primary run inside the global write lock:
- *       make room (maxmemory) -&gt; normalize -&gt; execute -&gt; AOF -&gt; queue for replicas.
- *       Writes on a replica are rejected with {@code -READONLY}.</li>
+ *       check the fence -&gt; make room (maxmemory) -&gt; normalize -&gt; execute -&gt; AOF -&gt; queue for
+ *       replicas. Writes on a replica are rejected with {@code -READONLY}; in cluster mode a primary that
+ *       cannot prove its leadership (see {@link ClusterState#mayWrite()}) refuses them with
+ *       {@code -CLUSTERDOWN}.</li>
  * </ol>
  *
  * <h3>Performance: pipelining</h3>
@@ -74,7 +77,7 @@ public class ClientHandler {
 
     /** Commands implemented in this class that only admins may run. */
     private static final Set<String> ADMIN_BUILTINS =
-            Set.of("PSYNC", "REPLCONF", "BGREWRITEAOF", "REPLICAOF", "SLAVEOF", "MONITOR");
+            Set.of("PSYNC", "REPLCONF", "BGREWRITEAOF", "REPLICAOF", "SLAVEOF", "MONITOR", "FAILOVER");
     private static final Set<String> SUBSCRIBED_ALLOWED =
             Set.of("SUBSCRIBE", "UNSUBSCRIBE", "PSUBSCRIBE", "PUNSUBSCRIBE", "PING", "QUIT");
     /** Still answered while a replica is loading its snapshot. */
@@ -96,8 +99,9 @@ public class ClientHandler {
     private final ClientRegistry clientRegistry;
     private final SlowLog slowLog;
     private final CommandStats commandStats;
+    private final ClusterState clusterState;
 
-    @Autowired
+    /** Standalone wiring (no ZooKeeper): the write fence is always open. */
     public ClientHandler(
             RespParser parser,
             CommandHandler commandHandler,
@@ -114,6 +118,29 @@ public class ClientHandler {
             SlowLog slowLog,
             CommandStats commandStats
     ) {
+        this(parser, commandHandler, respWriter, replicationManager, authConfig, serverStats, appendOnlyLog,
+                authFailureTracker, aclRegistry, memoryManager, pubSubBroker, clientRegistry, slowLog,
+                commandStats, ClusterState.standalone());
+    }
+
+    @Autowired
+    public ClientHandler(
+            RespParser parser,
+            CommandHandler commandHandler,
+            RespWriter respWriter,
+            ReplicationManager replicationManager,
+            RedCakeAuthConfig authConfig,
+            ServerStats serverStats,
+            AppendOnlyLog appendOnlyLog,
+            AuthFailureTracker authFailureTracker,
+            AclRegistry aclRegistry,
+            MemoryManager memoryManager,
+            PubSubBroker pubSubBroker,
+            ClientRegistry clientRegistry,
+            SlowLog slowLog,
+            CommandStats commandStats,
+            ClusterState clusterState
+    ) {
         this.parser = parser;
         this.commandHandler = commandHandler;
         this.respWriter = respWriter;
@@ -128,6 +155,7 @@ public class ClientHandler {
         this.clientRegistry = clientRegistry;
         this.slowLog = slowLog;
         this.commandStats = commandStats;
+        this.clusterState = clusterState;
     }
 
     /** Convenience constructor with default (inert) collaborators; used by unit tests. */
@@ -275,6 +303,10 @@ public class ClientHandler {
                 && !LOADING_SAFE.contains(name)) {
             return new ErrorValue("LOADING the replica is loading its dataset from the primary");
         }
+        if (!clusterState.isDataTrusted() && !LOADING_SAFE.contains(name)) {
+            // Only an old append-only file has been replayed so far; do not present that as the dataset.
+            return new ErrorValue("LOADING this node is joining the cluster and has no trusted dataset yet");
+        }
         if (s.isSubscribed() && !SUBSCRIBED_ALLOWED.contains(name)) {
             return new ErrorValue("Can't execute '" + name.toLowerCase(Locale.ROOT)
                     + "': only (P)SUBSCRIBE / (P)UNSUBSCRIBE / PING / QUIT are allowed in this context");
@@ -325,6 +357,7 @@ public class ClientHandler {
             case "PSYNC" -> psync(s, command);
             case "REPLCONF" -> replconf(s, command);
             case "REPLICAOF", "SLAVEOF" -> replicaOf(command);
+            case "FAILOVER" -> failover(command);
             case "WAIT" -> waitForReplicas(command);
             case "BGREWRITEAOF" -> rewriteAof();
             case "SUBSCRIBE", "UNSUBSCRIBE", "PSUBSCRIBE", "PUNSUBSCRIBE" -> subscription(s, command, name);
@@ -404,6 +437,11 @@ public class ClientHandler {
         if (!replicationManager.isPrimary()) {
             return new ErrorValue("a replica cannot serve PSYNC (replica chaining is not supported)");
         }
+        if (!clusterState.canServeReplicas()) {
+            s.closeRequested = true;
+            return new ErrorValue("NOTPRIMARY this node is not the cluster primary right now; "
+                    + "replicate from the primary published in ZooKeeper");
+        }
         long offset;
         try {
             if (command.size() != 3) {
@@ -456,6 +494,10 @@ public class ClientHandler {
 
     /** {@code REPLICAOF host port} or {@code REPLICAOF NO ONE}. */
     private RespValue replicaOf(List<String> command) {
+        if (clusterState.isManaged()) {
+            return new ErrorValue("REPLICAOF is disabled: ZooKeeper decides the roles in cluster mode "
+                    + "(use FAILOVER on the primary to move the role)");
+        }
         if (command.size() != 3) {
             return new ErrorValue("wrong number of arguments for 'replicaof' command");
         }
@@ -484,6 +526,43 @@ public class ClientHandler {
             return new ErrorValue("Invalid master port");
         } catch (IOException e) {
             return new ErrorValue("MISCONF could not start the append-only file: " + e.getMessage());
+        }
+    }
+
+    /**
+     * {@code FAILOVER [TO host port] [TIMEOUT ms]} (cluster mode, sent to the primary): hands the primary role
+     * to a replica without losing a write - writes pause, the replicas catch up, ZooKeeper's leader znode is
+     * released for the chosen (or best) replica. Nothing changes if the replicas cannot catch up in time.
+     */
+    private RespValue failover(List<String> command) {
+        ClusterState.FailoverHandler handler = clusterState.failoverHandler();
+        if (!clusterState.isManaged() || handler == null) {
+            return new ErrorValue("FAILOVER needs cluster mode (--zk-connect)");
+        }
+        String host = null;
+        int port = 0;
+        long timeout = 30_000;
+        try {
+            for (int i = 1; i < command.size(); i++) {
+                String option = command.get(i).toUpperCase(Locale.ROOT);
+                if ("TO".equals(option) && i + 2 < command.size() && host == null) {
+                    host = command.get(++i);
+                    port = Integer.parseInt(command.get(++i));
+                } else if ("TIMEOUT".equals(option) && i + 1 < command.size()) {
+                    timeout = Long.parseLong(command.get(++i));
+                    if (timeout < 1) {
+                        return new ErrorValue("FAILOVER TIMEOUT must be at least 1 ms");
+                    }
+                } else {
+                    return CommandSupport.SYNTAX_ERROR;
+                }
+            }
+            handler.failover(host, port, timeout);
+            return new SimpleString("OK");
+        } catch (NumberFormatException e) {
+            return new ErrorValue("value is not an integer or out of range");
+        } catch (IllegalStateException e) {
+            return new ErrorValue("FAILOVER refused: " + e.getMessage());
         }
     }
 
@@ -544,7 +623,7 @@ public class ClientHandler {
         }
         if (known.isWrite() && replicationManager.isReplica()) {
             s.multiDirty = true;
-            return new ErrorValue("READONLY replica does not accept writes");
+            return readOnlyError();
         }
         s.queued.add(command);
         return new SimpleString("QUEUED");
@@ -582,6 +661,10 @@ public class ClientHandler {
         if (dirty) {
             return new ErrorValue("EXECABORT Transaction discarded because of previous errors.");
         }
+        if (!clusterState.mayWrite() && queued.stream().anyMatch(this::isWrite)) {
+            // All or nothing: do not start a transaction that would be cut off half way by the fence.
+            return new ErrorValue("EXECABORT Transaction discarded: " + clusterState.writeRefusal());
+        }
 
         replicationManager.lockPrimaryWrites();
         try {
@@ -599,6 +682,11 @@ public class ClientHandler {
         } finally {
             replicationManager.unlockPrimaryWrites();
         }
+    }
+
+    private boolean isWrite(List<String> command) {
+        RedCakeCommand known = commandHandler.find(command.getFirst());
+        return known != null && known.isWrite();
     }
 
     // ------------------------------------------------------------ pub/sub
@@ -740,6 +828,17 @@ public class ClientHandler {
         return response;
     }
 
+    /**
+     * Why a replica refuses a write. In cluster mode the reason depends on the situation: a follower says who
+     * the primary is ({@code -READONLY}), a node that has no primary right now says so ({@code -CLUSTERDOWN})
+     * so clients retry instead of looking for another node.
+     */
+    private ErrorValue readOnlyError() {
+        return new ErrorValue(clusterState.isManaged()
+                ? clusterState.writeRefusal()
+                : "READONLY replica does not accept writes");
+    }
+
     /** Runs a command, applying the read/write rules described in the class comment. */
     private RespValue execute(List<String> command) {
         try {
@@ -750,7 +849,7 @@ public class ClientHandler {
                 return commandHandler.handle(command);
             }
             if (replicationManager.isReplica()) {
-                return new ErrorValue("READONLY replica does not accept writes");
+                return readOnlyError();
             }
             if (!appendOnlyLog.isHealthy()) {
                 return new ErrorValue(
@@ -772,6 +871,15 @@ public class ClientHandler {
     private RespValue executeWrite(List<String> command, boolean growsMemory) {
         replicationManager.lockPrimaryWrites();
         try {
+            // The fence is checked inside the lock, per write: a primary that cannot prove it is still the
+            // primary (ZooKeeper suspended/lost, lease over) must not acknowledge anything.
+            if (!clusterState.mayWrite()) {
+                return new ErrorValue(clusterState.writeRefusal());
+            }
+            if (!replicationManager.hasEnoughReplicasToWrite()) {
+                return new ErrorValue("NOREPLICAS Not enough good replicas to write.");
+            }
+
             // Enforce maxmemory first; evictions are logged as DELs so replicas follow.
             MemoryManager.Outcome room = memoryManager.makeRoom(growsMemory);
             for (String evicted : room.evicted()) {

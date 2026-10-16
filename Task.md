@@ -162,8 +162,8 @@ Wrong-type semantics: once non-string types exist, add `WRONGTYPE Operation agai
   *Done: offset, replid and a ring-buffer backlog (`--repl-backlog-size`), shown in INFO*
 - [x] Partial resync: `PSYNC <replid> <offset>` → `+CONTINUE` if offset in backlog else `+FULLRESYNC`.
   *Done: `PSYNC <replid> <offset>` -> `REPLICAHELLO CONTINUE` / `FULLRESYNC` (ReplicationEndToEndTest, ADR 0002)*
-- [~] Replica ACKs (`REPLCONF ACK <offset>` every second) → `WAIT numreplicas timeout`, `min-replicas-to-write`, lag in `INFO`.
-  *Partial: `REPLCONF ACK` every second and on GETACK, `WAIT`, per-replica offset/lag in INFO; `min-replicas-to-write` open*
+- [x] Replica ACKs (`REPLCONF ACK <offset>` every second) → `WAIT numreplicas timeout`, `min-replicas-to-write`, lag in `INFO`.
+  *Done: `REPLCONF ACK` every second and on GETACK, `WAIT`, per-replica offset/lag in INFO, `--min-replicas-to-write`/`--min-replicas-max-lag` (`-NOREPLICAS`)*
 - [x] Heartbeats both directions, `repl-timeout`.  
   *Done: primary PING every 10 s, replica ACK every second, 60 s read timeout*
 - [x] Per-replica sender thread + bounded output buffer (soft/hard limits like `client-output-buffer-limit replica`); drop replica instead of stalling primary (fixes B1).
@@ -175,7 +175,8 @@ Wrong-type semantics: once non-string types exist, add `WRONGTYPE Operation agai
 - [ ] Use a dedicated replication port or authenticated `REPLCONF` identity separate from client auth.
 
 ### 3.5 High availability (optional, big)
-- [ ] Sentinel-like monitor **or** Raft (e.g. Apache Ratis / own) for leader election; epoch/term + fencing token on every write; fail-closed on lease loss. README already lists requirements — turn it into an ADR first.
+- [x] Sentinel-like monitor **or** Raft (e.g. Apache Ratis / own) for leader election; epoch/term + fencing token on every write; fail-closed on lease loss. README already lists requirements — turn it into an ADR first.
+  *Done with ZooKeeper instead of a monitor or Raft: ADR 0005, `cluster` package, 21 end-to-end failover tests (crash, partition, silent partition, outage, planned hand-over, cold start, stale AOF). Raft stays open as a ZooKeeper-free alternative*
 - [ ] Cluster mode (16384 hash slots, `MOVED`/`ASK`, `CLUSTER` commands) — only after single-node is solid.
 
 ### 3.6 Security
@@ -447,7 +448,8 @@ ss -ltnp | grep -E ':6379|:6381'
 - [~] Pub/Sub, MULTI/EXEC/WATCH, blocking list ops
   *Partial: Pub/Sub and MULTI/EXEC/WATCH done; blocking list operations open*
 - [ ] Streams, Lua/Functions
-- [ ] Sentinel-style failover or Raft; then cluster slots
+- [~] Sentinel-style failover or Raft; then cluster slots
+  *Partial: ZooKeeper-based failover done (ADR 0005); Raft and cluster slots open*
 - [ ] Native image build
 
 ---
@@ -557,3 +559,44 @@ ACL file order was lost (`Map.copyOf`); unknown role names lacked the file/line;
 3. Per-key/per-command ACL rules, `ACL LOG`, audit log.
 4. Network-partition tests (Toxiproxy), a real 24 h soak, client-library compatibility runs, the Redis TCL suite.
 5. Sentinel-style failover or Raft; then cluster slots.
+
+
+---
+
+## 13. Progress log — failover pass (2026-10-16)
+
+### Added
+ZooKeeper-coordinated automatic failover (opt-in, `--zk-connect`), designed in `docs/adr/0005-zookeeper-failover.md`:
+`cluster` package (`FailoverCoordinator`, `ZooKeeperService`, `ElectionPolicy`, `ClusterState`, `ClusterEpochFile`, records),
+PSYNC2-style `replid2` + stream mirroring so replicas resume after a promotion, `FAILOVER`, graceful hand-over on shutdown,
+`--min-replicas-to-write`, `INFO cluster`, `redcake_cluster_*`, `/primary` and `/replica` endpoints, `docker-compose.cluster.yml`,
+`deploy/haproxy.cfg.example`.
+
+### Verified
+- Unit tests for the election rules, the fence (fake clock), record formats, options and PSYNC2 bookkeeping.
+- `ClusterFailoverTest` runs complete nodes (real sockets, real replication, real coordinator) against an embedded ZooKeeper:
+  bootstrap, crashed primary, cut-off primary (fences, steps down, rejoins, drops its unreplicated write), silent partition
+  (lease), short and long ZooKeeper outages, planned `FAILOVER` (and its abort), graceful shutdown, ghost leader znode,
+  priority 0, stale AOF, cold start, AOF replay, load-balancer endpoints.
+- `scripts/failover-test.sh` with three packaged-jar processes against a standalone single-node ZooKeeper: `kill -9` of the
+  primary (writable successor after 5.1 s with a 3 s session and `tickTime` 1 s, 5.5 s with `tickTime` 2 s; no acknowledged
+  write lost, the other replica resumes with a partial resync), planned `FAILOVER` and `SIGTERM` (about 0.25 s),
+  `SIGSTOP`/`SIGCONT` of the primary (the woken-up node answers `-CLUSTERDOWN`, then rejoins as a replica). 22 of 22 checks
+  with each tick time, and in earlier runs three times in a row.
+- `./mvnw -o test`: **252 tests, 0 failures** (1 min 38 s).
+- A full run once failed `aBriefZooKeeperOutage...` (an election where none was expected). Cause: after a dropped connection the
+  ZooKeeper client waits 0-1 s before reconnecting, plus 1 s when it knows a single address, which can outlast the 2 s test
+  session. The tests now list the proxy twice and use the longest session the test server grants (4 s) where a session has to
+  survive; repeated 25 times that test failed 0 times idle and under double CPU load, the old setup 3 times. The same effect
+  is in the README tuning notes and ADR 0005, and a node warns at startup when the session timeout is below 5 s.
+
+### Not verified in this environment
+- A multi-machine ZooKeeper ensemble and real network partitions (the tests cut a TCP proxy; the script freezes a process),
+  client-library behaviour during a failover, `docker-compose.cluster.yml` and `deploy/haproxy.cfg.example` (written, not
+  run here).
+
+### Suggested next steps
+1. Run `docker compose -f docker-compose.cluster.yml up` and kill containers; run the partition tests with Toxiproxy.
+2. Persist `replid`/offset with the AOF so a restarted ex-primary can be ranked (and resume) by its true position.
+3. Synchronous replication option (`WAIT`-per-write) for workloads that cannot lose a single acknowledged write.
+4. Raft (e.g. Apache Ratis) as a ZooKeeper-free alternative.

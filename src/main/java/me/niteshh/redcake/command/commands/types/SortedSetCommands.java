@@ -12,10 +12,10 @@ import me.niteshh.redcake.store.ZSet;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Function;
+import java.util.stream.Stream;
 
 import static me.niteshh.redcake.command.LambdaCommand.read;
 import static me.niteshh.redcake.command.LambdaCommand.shrink;
@@ -76,8 +76,7 @@ public class SortedSetCommands implements CommandProvider {
                 read("ZCOUNT", 3, 3, a -> {
                     Bound min = Bound.parse(a.get(1));
                     Bound max = Bound.parse(a.get(2));
-                    return new IntegerValue(readZ(a.get(0), z -> z == null ? 0
-                            : z.toList().stream().filter(e -> min.below(e.score()) && max.above(e.score())).count()));
+                    return new IntegerValue(readZ(a.get(0), z -> z == null ? 0L : between(z, min, max).count()));
                 }),
                 shrink("ZPOPMIN", 1, 2, a -> pop(a, true)),
                 shrink("ZPOPMAX", 1, 2, a -> pop(a, false))
@@ -156,12 +155,8 @@ public class SortedSetCommands implements CommandProvider {
             if (z == null) {
                 return ArrayValue.empty();
             }
-            List<ZSet.Entry> all = z.toList();
-            if (reverse) {
-                Collections.reverse(all);
-            }
-            int[] r = CommandSupport.range(start, stop, all.size());
-            return r == null ? ArrayValue.empty() : flatten(all.subList(r[0], r[1] + 1), scores);
+            int[] r = CommandSupport.range(start, stop, z.size());
+            return r == null ? ArrayValue.empty() : flatten(z.slice(r[0], r[1], reverse), scores);
         });
     }
 
@@ -190,16 +185,18 @@ public class SortedSetCommands implements CommandProvider {
         final long limit = count;
 
         return readZ(a.get(0), z -> {
-            if (z == null) {
+            if (z == null || skip < 0) { // a negative offset matches nothing, as in Redis
                 return ArrayValue.empty();
             }
-            List<ZSet.Entry> matches = z.toList().stream()
-                    .filter(e -> min.below(e.score()) && max.above(e.score()))
-                    .skip(skip)
-                    .limit(limit)
-                    .toList();
-            return flatten(matches, scores);
+            return flatten(between(z, min, max).skip(skip).limit(limit).toList(), scores);
         });
+    }
+
+    /** Entries within {@code [min, max]}, ascending; O(log n + matches) rather than a scan of the whole set. */
+    private static Stream<ZSet.Entry> between(ZSet z, Bound min, Bound max) {
+        return z.scoresFrom(min.value())
+                .dropWhile(e -> !min.atLeast(e.score())) // only the entries equal to an exclusive bound
+                .takeWhile(e -> max.atMost(e.score()));
     }
 
     /** {@code ZPOPMIN/ZPOPMAX key [count]}: pops up to count members as [member, score, ...]. */
@@ -231,19 +228,18 @@ public class SortedSetCommands implements CommandProvider {
 
     /** One end of a score interval: {@code 5}, {@code (5} (exclusive), {@code -inf}, {@code +inf}. */
     private record Bound(double value, boolean exclusive) {
-
         static Bound parse(String text) {
             boolean exclusive = text.startsWith("(");
             return new Bound(CommandSupport.parseDouble(exclusive ? text.substring(1) : text), exclusive);
         }
 
-        /** @return {@code true} if {@code score} is at or above this lower bound */
-        boolean below(double score) {
+        /** @return {@code true} if {@code score} satisfies this bound used as a minimum */
+        boolean atLeast(double score) {
             return exclusive ? score > value : score >= value;
         }
 
-        /** @return {@code true} if {@code score} is at or below this upper bound */
-        boolean above(double score) {
+        /** @return {@code true} if {@code score} satisfies this bound used as a maximum */
+        boolean atMost(double score) {
             return exclusive ? score < value : score <= value;
         }
     }

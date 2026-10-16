@@ -15,11 +15,33 @@
     <description>RedCake - a Redis-compatible in-memory key-value server with replication and AOF persistence</description>
     <properties>
         <java.version>21</java.version>
+        <curator.version>5.9.0</curator.version>
+        <zookeeper.version>3.9.6</zookeeper.version>
     </properties>
     <dependencies>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter</artifactId>
+        </dependency>
+
+        <!-- Cluster coordination: leader election and failover (see docs/adr/0005-zookeeper-failover.md) -->
+        <dependency>
+            <groupId>org.apache.curator</groupId>
+            <artifactId>curator-framework</artifactId>
+            <version>${curator.version}</version>
+        </dependency>
+        <!-- Curator 5 does not pull the ZooKeeper client in itself (its scope there is "provided"). -->
+        <dependency>
+            <groupId>org.apache.zookeeper</groupId>
+            <artifactId>zookeeper</artifactId>
+            <version>${zookeeper.version}</version>
+            <exclusions>
+                <!-- Native TLS libraries for five platforms (~20 MB); the client uses the plain JDK socket stack. -->
+                <exclusion>
+                    <groupId>io.netty</groupId>
+                    <artifactId>netty-tcnative-boringssl-static</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <dependency>
@@ -30,6 +52,13 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Embedded ZooKeeper (TestingServer) for the failover tests -->
+        <dependency>
+            <groupId>org.apache.curator</groupId>
+            <artifactId>curator-test</artifactId>
+            <version>${curator.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -72,7 +101,7 @@
                     <plugin>
                         <groupId>org.jacoco</groupId>
                         <artifactId>jacoco-maven-plugin</artifactId>
-                        <version>0.8.12</version>
+                        <version>0.8.14</version>
                         <executions>
                             <execution>
                                 <goals><goal>prepare-agent</goal></goals>

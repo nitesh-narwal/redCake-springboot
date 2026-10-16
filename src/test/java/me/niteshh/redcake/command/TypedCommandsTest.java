@@ -255,6 +255,69 @@ class TypedCommandsTest {
     }
 
     @Test
+    void zrangebyscoreNegativeOffsetIsEmpty() {
+        run("ZADD", "z", "1", "a", "2", "b");
+        assertEquals(List.of(), strings(run("ZRANGEBYSCORE", "z", "-inf", "+inf", "LIMIT", "-1", "5")));
+        assertEquals(List.of("b"), strings(run("ZRANGEBYSCORE", "z", "-inf", "+inf", "LIMIT", "1", "-1")));
+    }
+
+    @Test
+    void zsetScoreBoundsAndRanges() {
+        run("ZADD", "z", "-0", "neg", "0", "zero", "1", "a", "1", "b", "2", "c", "inf", "top");
+        assertEquals(List.of("neg", "zero"), strings(run("ZRANGEBYSCORE", "z", "0", "0")));
+        assertEquals(List.of("a", "b"), strings(run("ZRANGEBYSCORE", "z", "1", "1")));
+        assertEquals(List.of("c", "top"), strings(run("ZRANGEBYSCORE", "z", "(1", "+inf")));
+        assertEquals(List.of("c"), strings(run("ZRANGEBYSCORE", "z", "(1", "(inf")));
+        assertEquals(List.of(), strings(run("ZRANGEBYSCORE", "z", "(inf", "+inf")));
+        assertEquals(List.of(), strings(run("ZRANGEBYSCORE", "z", "5", "1")));
+        assertEquals(new IntegerValue(5), run("ZCOUNT", "z", "0", "2"));
+        assertEquals(new IntegerValue(2), run("ZCOUNT", "z", "(0", "(2"));
+        assertEquals(List.of("top", "c", "b"), strings(run("ZREVRANGE", "z", "0", "2")));
+        assertEquals(List.of("b", "a"), strings(run("ZREVRANGE", "z", "2", "3")));
+        assertEquals(List.of("zero", "a"), strings(run("ZRANGE", "z", "1", "2")));
+        assertEquals(List.of("c", "top"), strings(run("ZRANGE", "z", "-2", "-1")));
+        assertEquals(List.of(), strings(run("ZRANGE", "z", "9", "12")));
+    }
+
+    @Test
+    void listBatchOperations() {
+        run("RPUSH", "l", "a", "b", "c", "d", "e");
+        assertEquals(List.of("a", "b"), strings(run("LPOP", "l", "2")));
+        assertEquals(List.of("e", "d"), strings(run("RPOP", "l", "2")));
+        assertEquals(List.of("c"), strings(run("LPOP", "l", "99")));
+        assertEquals(new IntegerValue(0), run("EXISTS", "l"));
+
+        run("RPUSH", "r", "x", "a", "x", "b", "x", "c", "x");
+        assertEquals(new IntegerValue(2), run("LREM", "r", "-2", "x"));
+        assertEquals(List.of("x", "a", "x", "b", "c"), strings(run("LRANGE", "r", "0", "-1")));
+        assertEquals(new IntegerValue(2), run("LREM", "r", "0", "x"));
+        assertEquals(List.of("a", "b", "c"), strings(run("LRANGE", "r", "0", "-1")));
+        assertEquals(new IntegerValue(0), run("LREM", "r", "5", "nope"));
+
+        run("LTRIM", "r", "1", "1");
+        assertEquals(List.of("b"), strings(run("LRANGE", "r", "0", "-1")));
+        run("LTRIM", "r", "5", "9");
+        assertEquals(new IntegerValue(0), run("EXISTS", "r"));
+
+        run("LPUSH", "p", "1", "2", "3");
+        run("LPUSH", "p", "4", "5");
+        assertEquals(List.of("5", "4", "3", "2", "1"), strings(run("LRANGE", "p", "0", "-1")));
+    }
+
+    @Test
+    void setAlgebraWithMissingAndEmptyKeys() {
+        run("SADD", "a", "1", "2", "3");
+        run("SADD", "b", "2", "3", "4");
+        assertEquals(List.of(), strings(run("SINTER", "a", "none")));
+        assertEquals(List.of("1", "2", "3"), strings(run("SDIFF", "a", "none")));
+        assertEquals(List.of(), strings(run("SDIFF", "none", "a")));
+        assertEquals(List.of("1"), strings(run("SDIFF", "a", "b")));
+        assertEquals(List.of("2", "3"), strings(run("SINTER", "a", "b", "a")));
+        run("SET", "str", "x");
+        assertError(run("SINTER", "a", "none", "str"), "WRONGTYPE");
+    }
+
+    @Test
     void extraStringCommands() {
         run("SET", "k", "Hello World");
         assertEquals(new BulkString("Hello"), run("GETRANGE", "k", "0", "4"));
@@ -268,5 +331,16 @@ class TypedCommandsTest {
         assertTrue(Math.abs(expireTime - (System.currentTimeMillis() / 1000 + 100)) <= 2);
         assertEquals(new IntegerValue(-1), run("EXPIRETIME", "k"));
         assertEquals(new IntegerValue(-2), run("EXPIRETIME", "missing"));
+    }
+
+    @Test
+    void expireTimeIsTheStoredDeadline() {
+        long deadline = System.currentTimeMillis() + 60_000;
+        run("SET", "t", "v", "PXAT", Long.toString(deadline));
+        for (int i = 0; i < 3; i++) {
+            assertEquals(new IntegerValue(deadline), run("PEXPIRETIME", "t"));
+            assertEquals(new IntegerValue(deadline / 1000), run("EXPIRETIME", "t"));
+            Thread.onSpinWait();
+        }
     }
 }

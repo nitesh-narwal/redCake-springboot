@@ -43,8 +43,8 @@ public class RoleCommand implements RedCakeCommand {
         if (config.getRole() == ReplicationRole.REPLICA) {
             return new ArrayValue(List.of(
                     new BulkString("slave"),
-                    new BulkString(String.valueOf(config.getPrimaryHost())),
-                    new IntegerValue(config.getPrimaryPort()),
+                    new BulkString(config.getPrimaryHost() == null ? "" : config.getPrimaryHost()),
+                    new IntegerValue(config.getPrimaryHost() == null ? 0 : config.getPrimaryPort()),
                     new BulkString(stats.isMasterLinkUp() ? "connected" : "connect"),
                     new IntegerValue(stats.offset())));
         }

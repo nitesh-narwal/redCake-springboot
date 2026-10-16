@@ -11,6 +11,7 @@ import me.niteshh.redcake.store.ValueType;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.function.Function;
 
@@ -62,7 +63,6 @@ public class ListCommands implements CommandProvider {
                 }),
                 write("LSET", 3, 3, a -> {
                     long index = CommandSupport.parseLong(a.get(1));
-                    List<Boolean> done = new ArrayList<>();
                     Boolean exists = store.<Boolean>mutate(a.get(0), ValueType.LIST, null, o -> {
                         List<String> l = list(o);
                         long i = index < 0 ? l.size() + index : index;
@@ -86,9 +86,12 @@ public class ListCommands implements CommandProvider {
                     store.<Boolean>mutate(a.get(0), ValueType.LIST, null, o -> {
                         List<String> l = list(o);
                         int[] r = CommandSupport.range(start, stop, l.size());
-                        List<String> kept = r == null ? List.of() : new ArrayList<>(l.subList(r[0], r[1] + 1));
-                        l.clear();
-                        l.addAll(kept);
+                        if (r == null) {
+                            l.clear();
+                        } else {
+                            l.subList(r[1] + 1, l.size()).clear(); // tail first so r[0] stays valid
+                            l.subList(0, r[0]).clear();
+                        }
                         return true;
                     });
                     return new SimpleString("OK");
@@ -99,12 +102,13 @@ public class ListCommands implements CommandProvider {
     private int push(List<String> a, boolean head) {
         return store.<Integer>mutate(a.get(0), ValueType.LIST, ArrayList::new, o -> {
             List<String> l = list(o);
-            for (String value : a.subList(1, a.size())) {
-                if (head) {
-                    l.add(0, value);
-                } else {
-                    l.add(value);
-                }
+            List<String> values = new ArrayList<>(a.subList(1, a.size()));
+            if (head) {
+                // LPUSH a b c leaves c b a: one bulk insert instead of one memmove per value.
+                Collections.reverse(values);
+                l.addAll(0, values);
+            } else {
+                l.addAll(values);
             }
             return l.size();
         });
@@ -120,10 +124,13 @@ public class ListCommands implements CommandProvider {
 
         List<String> popped = store.<List<String>>mutate(a.get(0), ValueType.LIST, null, o -> {
             List<String> l = list(o);
-            List<String> out = new ArrayList<>();
-            for (long i = 0; i < count && !l.isEmpty(); i++) {
-                out.add(l.remove(head ? 0 : l.size() - 1));
+            int n = (int) Math.min(count, l.size());
+            List<String> window = head ? l.subList(0, n) : l.subList(l.size() - n, l.size());
+            List<String> out = new ArrayList<>(window);
+            if (!head) {
+                Collections.reverse(out); // RPOP returns the last element first
             }
+            window.clear(); // one memmove instead of one per popped element
             return out;
         });
 
@@ -136,24 +143,25 @@ public class ListCommands implements CommandProvider {
 
     /** count &gt; 0: first {@code count} from the head; &lt; 0: from the tail; 0: all. */
     private static int removeOccurrences(List<String> l, String element, long count) {
-        int removed = 0;
         long limit = count == 0 ? Long.MAX_VALUE : Math.abs(count);
-        if (count >= 0) {
-            for (int i = 0; i < l.size() && removed < limit; ) {
-                if (l.get(i).equals(element)) {
-                    l.remove(i);
-                    removed++;
-                } else {
-                    i++;
-                }
+        boolean fromTail = count < 0;
+        List<String> kept = new ArrayList<>(l.size());
+        int removed = 0;
+        // Single pass that rebuilds the list; removing in place shifts the tail once per hit (O(n^2)).
+        for (int i = 0; i < l.size(); i++) {
+            String value = l.get(fromTail ? l.size() - 1 - i : i);
+            if (removed < limit && value.equals(element)) {
+                removed++;
+            } else {
+                kept.add(value);
             }
-        } else {
-            for (int i = l.size() - 1; i >= 0 && removed < limit; i--) {
-                if (l.get(i).equals(element)) {
-                    l.remove(i);
-                    removed++;
-                }
+        }
+        if (removed > 0) {
+            if (fromTail) {
+                Collections.reverse(kept);
             }
+            l.clear();
+            l.addAll(kept);
         }
         return removed;
     }

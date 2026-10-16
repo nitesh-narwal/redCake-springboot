@@ -4,7 +4,6 @@ import lombok.RequiredArgsConstructor;
 import me.niteshh.redcake.command.CommandException;
 import me.niteshh.redcake.command.CommandProvider;
 import me.niteshh.redcake.command.CommandSupport;
-import me.niteshh.redcake.command.LambdaCommand;
 import me.niteshh.redcake.command.RedCakeCommand;
 import me.niteshh.redcake.resp.*;
 import me.niteshh.redcake.store.KeyValueStore;

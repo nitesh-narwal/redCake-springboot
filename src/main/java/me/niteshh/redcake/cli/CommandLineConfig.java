@@ -1,6 +1,7 @@
 package me.niteshh.redcake.cli;
 
 import lombok.Getter;
+import me.niteshh.redcake.cluster.ClusterConfig;
 import me.niteshh.redcake.config.AclConfig;
 import me.niteshh.redcake.config.MemoryConfig;
 import me.niteshh.redcake.config.PersistenceConfig;
@@ -61,11 +62,18 @@ public final class CommandLineConfig {
             Map.entry("--acl-file", 1), Map.entry("--hash-password", 0),
             Map.entry("--metrics-port", 1), Map.entry("--slowlog-threshold-us", 1),
             Map.entry("--repl-backlog-size", 1),
+            Map.entry("--min-replicas-to-write", 1), Map.entry("--min-replicas-max-lag", 1),
+            Map.entry("--zk-connect", 1), Map.entry("--cluster-name", 1), Map.entry("--node-id", 1),
+            Map.entry("--advertise-host", 1), Map.entry("--advertise-port", 1),
+            Map.entry("--replica-priority", 1), Map.entry("--zk-session-timeout-ms", 1),
+            Map.entry("--zk-connection-timeout-ms", 1), Map.entry("--cluster-election-delay-ms", 1),
+            Map.entry("--zk-auth-file", 1),
             Map.entry("--config", 1), Map.entry("--help", 0), Map.entry("-h", 0)
     );
 
     private final RedCakeServerConfig serverConfig;
     private final ReplicationConfig replicationConfig;
+    private final ClusterConfig clusterConfig;
     private final PersistenceConfig persistenceConfig;
     private final MemoryConfig memoryConfig;
     private final TlsConfig tlsConfig;
@@ -79,8 +87,11 @@ public final class CommandLineConfig {
 
         this.serverConfig = new RedCakeServerConfig(
                 o.port, o.bindAddress, o.maxClients, o.timeoutSeconds, o.allowInsecure);
+        this.clusterConfig = clusterConfigOf(o);
         this.replicationConfig = new ReplicationConfig(
-                o.role, o.primaryHost, o.primaryPort, o.backlogBytes);
+                o.role, o.primaryHost, o.primaryPort, o.backlogBytes, clusterConfig.isEnabled());
+        this.replicationConfig.setMinReplicasToWrite(o.minReplicasToWrite);
+        this.replicationConfig.setMinReplicasMaxLagSeconds(o.minReplicasMaxLagSeconds);
         this.persistenceConfig = new PersistenceConfig(o.aofFile, o.aofFsync);
         this.memoryConfig = new MemoryConfig(o.maxMemory, o.maxMemoryPolicy);
         this.tlsConfig = new TlsConfig(
@@ -106,6 +117,18 @@ public final class CommandLineConfig {
         String primaryHost;
         int primaryPort = DEFAULT_PORT;
         int backlogBytes = ReplicationConfig.DEFAULT_BACKLOG_BYTES;
+        int minReplicasToWrite;
+        int minReplicasMaxLagSeconds = ReplicationConfig.DEFAULT_MIN_REPLICAS_MAX_LAG_SECONDS;
+        String zkConnect;
+        String clusterName = ClusterConfig.DEFAULT_CLUSTER_NAME;
+        String nodeId;
+        String advertiseHost;
+        int advertisePort;
+        int replicaPriority = ClusterConfig.DEFAULT_REPLICA_PRIORITY;
+        int zkSessionTimeoutMs = ClusterConfig.DEFAULT_SESSION_TIMEOUT_MS;
+        int zkConnectionTimeoutMs = ClusterConfig.DEFAULT_CONNECTION_TIMEOUT_MS;
+        int electionDelayMs = ClusterConfig.DEFAULT_ELECTION_DELAY_MS;
+        String zkAuth = System.getenv("REDCAKE_ZK_AUTH");
         long maxMemory;
         MemoryConfig.Policy maxMemoryPolicy = MemoryConfig.Policy.NOEVICTION;
         Path tlsKeystore;
@@ -178,6 +201,26 @@ public final class CommandLineConfig {
                 case "--repl-backlog-size" -> o.backlogBytes = (int) Math.min(
                         Integer.MAX_VALUE,
                         parseSize(requireValue(args, i++, "--repl-backlog-size"), "--repl-backlog-size"));
+                case "--min-replicas-to-write" -> o.minReplicasToWrite = parseInt(
+                        requireValue(args, i++, "--min-replicas-to-write"), "--min-replicas-to-write", 0);
+                case "--min-replicas-max-lag" -> o.minReplicasMaxLagSeconds = parseInt(
+                        requireValue(args, i++, "--min-replicas-max-lag"), "--min-replicas-max-lag", 1);
+                case "--zk-connect" -> o.zkConnect = requireValue(args, i++, "--zk-connect");
+                case "--cluster-name" -> o.clusterName = requireValue(args, i++, "--cluster-name");
+                case "--node-id" -> o.nodeId = requireValue(args, i++, "--node-id");
+                case "--advertise-host" -> o.advertiseHost = requireValue(args, i++, "--advertise-host");
+                case "--advertise-port" -> o.advertisePort = parsePort(
+                        requireValue(args, i++, "--advertise-port"), "--advertise-port");
+                case "--replica-priority" -> o.replicaPriority = parseInt(
+                        requireValue(args, i++, "--replica-priority"), "--replica-priority", 0);
+                case "--zk-session-timeout-ms" -> o.zkSessionTimeoutMs = parseInt(
+                        requireValue(args, i++, "--zk-session-timeout-ms"), "--zk-session-timeout-ms", 1_000);
+                case "--zk-connection-timeout-ms" -> o.zkConnectionTimeoutMs = parseInt(
+                        requireValue(args, i++, "--zk-connection-timeout-ms"), "--zk-connection-timeout-ms", 100);
+                case "--cluster-election-delay-ms" -> o.electionDelayMs = parseInt(
+                        requireValue(args, i++, "--cluster-election-delay-ms"), "--cluster-election-delay-ms", 0);
+                case "--zk-auth-file" -> o.zkAuth = new String(readSecretFile(
+                        requireValue(args, i++, "--zk-auth-file"), "--zk-auth-file"));
                 case "--tls-keystore" -> o.tlsKeystore = Path.of(requireValue(args, i++, "--tls-keystore"));
                 case "--tls-keystore-password-file" -> o.tlsKeystorePassword = readSecretFile(
                         requireValue(args, i++, "--tls-keystore-password-file"), "--tls-keystore-password-file");
@@ -223,7 +266,43 @@ public final class CommandLineConfig {
                 default -> throw new IllegalArgumentException("Unknown argument: " + argument);
             }
         }
+
+        if (o.zkConnect != null) {
+            if (replicaOfSpecified) {
+                throw new IllegalArgumentException(
+                        "--replicaof cannot be combined with --zk-connect: ZooKeeper decides which node is the primary");
+            }
+            // Undecided until the coordinator has run an election: read-only, no primary assigned.
+            o.role = ReplicationRole.REPLICA;
+            o.primaryHost = null;
+        }
         return o;
+    }
+
+    /** Fills the cluster defaults that depend on other options (address to advertise, node id). */
+    private ClusterConfig clusterConfigOf(Options o) {
+        if (o.zkConnect == null) {
+            return ClusterConfig.disabled();
+        }
+        String host = o.advertiseHost != null ? o.advertiseHost : defaultAdvertiseHost(o.bindAddress);
+        int port = o.advertisePort != 0 ? o.advertisePort : o.port;
+        String id = o.nodeId != null ? o.nodeId : host + ":" + port;
+        return new ClusterConfig(o.zkConnect, o.clusterName, id, host, port, o.replicaPriority,
+                o.zkSessionTimeoutMs, o.zkConnectionTimeoutMs, o.electionDelayMs, o.zkAuth);
+    }
+
+    /** A wildcard bind address is not an address anybody can connect to; use this machine's own instead. */
+    private static String defaultAdvertiseHost(String bindAddress) {
+        boolean wildcard = bindAddress.equals("0.0.0.0") || bindAddress.equals("::")
+                || bindAddress.equals("0:0:0:0:0:0:0:0");
+        if (!wildcard) {
+            return bindAddress;
+        }
+        try {
+            return java.net.InetAddress.getLocalHost().getHostAddress();
+        } catch (java.net.UnknownHostException e) {
+            return RedCakeServerConfig.DEFAULT_BIND_ADDRESS;
+        }
     }
 
     // ---------------------------------------------------------- config file
@@ -411,6 +490,22 @@ public final class CommandLineConfig {
                 Replication
                   --replicaof HOST PORT    run as a read-only replica
                   --repl-backlog-size SIZE partial-resync buffer (default 1mb)
+                  --min-replicas-to-write N       refuse writes with fewer than N good replicas (default 0 = off)
+                  --min-replicas-max-lag SECONDS  a replica counts as good if it acknowledged this recently (default 10)
+
+                Automatic failover (ZooKeeper)
+                  --zk-connect HOSTS       enable it: host:port[,host:port...][/chroot]; ZooKeeper picks the primary
+                                           (cannot be combined with --replicaof; give every node the same options)
+                  --cluster-name NAME      znode namespace of this cluster (default redcake)
+                  --node-id ID             unique name of this node (default advertise-host:advertise-port)
+                  --advertise-host HOST    address other nodes and clients use to reach this node
+                                           (default: the bind address, or this machine's address for 0.0.0.0)
+                  --advertise-port PORT    port to advertise (default: --port)
+                  --replica-priority N     lower is promoted first, 0 = never promote (default 100)
+                  --zk-session-timeout-ms N  failure detection time; also bounds a cut-off primary (default 10000)
+                  --zk-connection-timeout-ms N  (default 5000)
+                  --cluster-election-delay-ms N  quiet time before promoting, spacing between candidates (default 1000)
+                  --zk-auth-file PATH      user:password for ZooKeeper digest auth (or env REDCAKE_ZK_AUTH)
 
                 Persistence & memory
                   --aof-file PATH          enable append-only-file persistence
@@ -426,6 +521,7 @@ public final class CommandLineConfig {
                 Examples:
                   java -jar redCake.jar --port 6380
                   java -jar redCake.jar --port 6381 --replicaof 127.0.0.1 6379
+                  java -jar redCake.jar --port 6379 --zk-connect zk1:2181,zk2:2181,zk3:2181 --advertise-host node1
                   java -jar redCake.jar --aof-file data/redcake.aof --maxmemory 256mb --maxmemory-policy allkeys-random
                 """);
     }

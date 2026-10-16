@@ -20,6 +20,10 @@ import java.net.Socket;
  * name</em>, so a replica cannot be tricked into syncing from an impostor.
  * Methods are synchronized because the sync thread connects/reads while a
  * shutdown hook may close it concurrently.
+ *
+ * <p>The (slow, up to 3 s) connect itself happens <em>outside</em> the monitor: when a primary's machine
+ * disappears, packets to it are dropped silently, and a failover that needs {@link #close()} must not wait
+ * for the dead host's connect attempt to time out. {@code close()} aborts a connect in progress instead.
  */
 @Slf4j
 @Component
@@ -28,6 +32,8 @@ public class PrimaryConnection {
     private final SSLContext sslContext;
 
     private Socket socket;
+    /** The socket {@link #connect} is still establishing (so {@link #close()} can abort it). */
+    private Socket connecting;
     private String host;
     private int port;
 
@@ -42,14 +48,18 @@ public class PrimaryConnection {
     }
 
     /** Opens the connection (3 s connect timeout, keepalive, no Nagle) unless already connected. */
-    public synchronized void connect(String host, int port) {
-        if (isConnected()) {
-            return;
-        }
+    public void connect(String host, int port) {
         Socket plain = new Socket();
-        try {
+        synchronized (this) {
+            if (isConnected()) {
+                closeQuietly(plain);
+                return;
+            }
             this.host = host;
             this.port = port;
+            this.connecting = plain;
+        }
+        try {
             plain.setKeepAlive(true);
             plain.setTcpNoDelay(true);
             plain.connect(new InetSocketAddress(host, port), 3_000);
@@ -65,12 +75,20 @@ public class PrimaryConnection {
                 tls.startHandshake();
                 connected = tls;
             }
-            this.socket = connected;
+            synchronized (this) {
+                if (connecting != plain) { // close() was called while we were connecting
+                    closeQuietly(connected);
+                    throw new IOException("connect was cancelled");
+                }
+                connecting = null;
+                this.socket = connected;
+            }
         } catch (IOException e) {
-            try {
-                plain.close();
-            } catch (IOException ignored) {
-                // already unusable
+            closeQuietly(plain);
+            synchronized (this) {
+                if (connecting == plain) {
+                    connecting = null;
+                }
             }
             throw new RuntimeException("Failed to connect to primary at " + host + ":" + port, e);
         }
@@ -84,17 +102,25 @@ public class PrimaryConnection {
         return socket;
     }
 
-    /** Closes the connection; safe to call repeatedly. */
+    /** Closes the connection (or aborts one being established); safe to call repeatedly. */
     public synchronized void close() {
+        if (connecting != null) {
+            closeQuietly(connecting);
+            connecting = null;
+        }
         if (socket == null) {
             return;
         }
+        closeQuietly(socket);
+        socket = null;
+        log.info("Disconnected from primary at {}:{}", host, port);
+    }
+
+    private static void closeQuietly(Socket socket) {
         try {
             socket.close();
         } catch (Exception e) {
             // already closed
         }
-        socket = null;
-        log.info("Disconnected from primary at {}:{}", host, port);
     }
 }

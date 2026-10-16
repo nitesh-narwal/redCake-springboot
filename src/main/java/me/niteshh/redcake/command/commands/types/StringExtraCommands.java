@@ -56,7 +56,8 @@ public class StringExtraCommands implements CommandProvider {
 
     /** Absolute expiry as unix time ({@code unit} = ms per result unit); -1 no TTL, -2 no key. */
     private RespValue expireTime(String key, long unit) {
-        long remaining = store.pttl(key);
-        return new IntegerValue(remaining < 0 ? remaining : (System.currentTimeMillis() + remaining) / unit);
+        // Read the stored deadline itself: now + pttl drifts by however long the two clock reads are apart.
+        long expiresAt = store.expiresAt(key);
+        return new IntegerValue(expiresAt < 0 ? expiresAt : expiresAt / unit);
     }
 }

@@ -64,21 +64,26 @@ public class SetCommands implements CommandProvider {
                 read("SINTER", 1, -1, a -> {
                     List<String> result = members(a.getFirst());
                     for (String key : a.subList(1, a.size())) {
-                        result.retainAll(new LinkedHashSet<>(members(key)));
+                        result = filter(result, key, true);
                     }
                     return ArrayValue.ofBulkStrings(result);
                 }),
                 read("SUNION", 1, -1, a -> {
                     Set<String> result = new LinkedHashSet<>();
                     for (String key : a) {
-                        result.addAll(members(key));
+                        readSet(key, s -> {
+                            if (s != null) {
+                                result.addAll(s);
+                            }
+                            return null;
+                        });
                     }
                     return ArrayValue.ofBulkStrings(new ArrayList<>(result));
                 }),
                 read("SDIFF", 1, -1, a -> {
                     List<String> result = members(a.getFirst());
                     for (String key : a.subList(1, a.size())) {
-                        result.removeAll(new LinkedHashSet<>(members(key)));
+                        result = filter(result, key, false);
                     }
                     return ArrayValue.ofBulkStrings(result);
                 })
@@ -88,6 +93,24 @@ public class SetCommands implements CommandProvider {
     /** @return a private copy of the members (empty list if the key is absent) */
     private List<String> members(String key) {
         return readSet(key, s -> s == null ? new ArrayList<String>() : new ArrayList<>(s));
+    }
+
+    /**
+     * Keeps the candidates that are (or, if {@code present} is false, are not) in the set at
+     * {@code key}. Probes the live set instead of copying it, so the cost follows the
+     * candidates rather than the size of the other set. A missing key is an empty set.
+     */
+    private List<String> filter(List<String> candidates, String key, boolean present) {
+        return readSet(key, s -> {
+            Set<String> other = s == null ? Set.of() : s;
+            List<String> kept = new ArrayList<>();
+            for (String member : candidates) {
+                if (other.contains(member) == present) {
+                    kept.add(member);
+                }
+            }
+            return kept;
+        });
     }
 
     private <T> T readSet(String key, Function<Set<String>, T> fn) {

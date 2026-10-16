@@ -1,0 +1,60 @@
+# Three RedCake nodes that elect their own primary through ZooKeeper (automatic failover).
+#   REDCAKE_API_KEY=change-me docker compose -f docker-compose.cluster.yml up --build
+#
+# Try it:
+#   redis-cli -p 6379 -a change-me INFO cluster          # who is leading? (any node answers)
+#   redis-cli -p 6379 -a change-me SET hello world       # on a replica: -READONLY ... (the primary is nodeN:6379)
+#   docker compose -f docker-compose.cluster.yml kill node1   # kill the primary; a replica takes over in ~12 s
+#   redis-cli -p 6380 -a change-me INFO cluster
+#   redis-cli -p 6380 -a change-me FAILOVER              # planned hand-over, no write lost
+#
+# Behind a load balancer clients need no change (profile "lb", port 6400 = writes, 6401 = reads):
+#   docker compose -f docker-compose.cluster.yml --profile lb up
+#
+# One ZooKeeper is enough to try this out; run a 3- or 5-member ensemble in production.
+x-redcake: &redcake
+  build: .
+  environment:
+    REDCAKE_API_KEY: ${REDCAKE_API_KEY:?set REDCAKE_API_KEY}
+  depends_on: [zookeeper]
+
+services:
+  zookeeper:
+    image: zookeeper:3.9
+    restart: unless-stopped
+    volumes: ["zookeeper-data:/data"]
+
+  node1:
+    <<: *redcake
+    # --advertise-host is how the OTHER nodes and clients reach this one (here: the compose service name).
+    command: ["--aof-file", "/data/redcake.aof", "--metrics-port", "9100",
+              "--zk-connect", "zookeeper:2181", "--advertise-host", "node1"]
+    ports: ["6379:6379"]
+    volumes: ["node1-data:/data"]
+
+  node2:
+    <<: *redcake
+    command: ["--aof-file", "/data/redcake.aof", "--metrics-port", "9100",
+              "--zk-connect", "zookeeper:2181", "--advertise-host", "node2"]
+    ports: ["6380:6379"]
+    volumes: ["node2-data:/data"]
+
+  node3:
+    <<: *redcake
+    command: ["--aof-file", "/data/redcake.aof", "--metrics-port", "9100",
+              "--zk-connect", "zookeeper:2181", "--advertise-host", "node3"]
+    ports: ["6381:6379"]
+    volumes: ["node3-data:/data"]
+
+  haproxy:
+    image: haproxy:3.0
+    profiles: ["lb"]
+    depends_on: [node1, node2, node3]
+    volumes: ["./deploy/haproxy.cfg.example:/usr/local/etc/haproxy/haproxy.cfg:ro"]
+    ports: ["6400:6400", "6401:6401"]
+
+volumes:
+  zookeeper-data:
+  node1-data:
+  node2-data:
+  node3-data:

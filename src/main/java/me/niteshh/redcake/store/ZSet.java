@@ -2,9 +2,11 @@ package me.niteshh.redcake.store;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
+import java.util.stream.Stream;
 
 /**
  * Sorted set: unique members ordered by (score, member).
@@ -76,6 +78,33 @@ public final class ZSet {
     /** @return all entries in ascending order (a copy) */
     public List<Entry> toList() {
         return new ArrayList<>(ordered);
+    }
+
+    /**
+     * Copies the entries ranked {@code from..to} (0-based, inclusive, both within
+     * {@code [0, size)}) without copying the rest of the set: O(from + count).
+     *
+     * @param reverse rank from the highest score down instead of the lowest up
+     */
+    public List<Entry> slice(int from, int to, boolean reverse) {
+        Iterator<Entry> it = reverse ? ordered.descendingIterator() : ordered.iterator();
+        for (int i = 0; i < from; i++) {
+            it.next();
+        }
+        List<Entry> out = new ArrayList<>(to - from + 1);
+        for (int i = from; i <= to; i++) {
+            out.add(it.next());
+        }
+        return out;
+    }
+
+    /**
+     * @return a lazy ascending view of the entries with score {@code >= min}
+     * (O(log n) to position). Consume it inside the key's atomic section.
+     */
+    public Stream<Entry> scoresFrom(double min) {
+        // Double.compare orders -0.0 before 0.0, so start at -0.0 to include both zeros.
+        return ordered.tailSet(new Entry(min == 0 ? -0.0 : min, ""), true).stream();
     }
 
     /** @return a deep copy, used for consistent snapshots */

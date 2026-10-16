@@ -20,12 +20,14 @@ public class RedCakeApplication {
             SpringApplication.run(RedCakeApplication.class, args);
         } catch (Exception e) {
             for (Throwable cause = e; cause != null; cause = cause.getCause()) {
-                if (cause instanceof CommandLineConfig.SystemExitException) {
-                    System.exit(0);
+                if (cause instanceof CommandLineConfig.SystemExitException) {   // instanceof is used when the class is not on the classpath
+                    // The CLI parser already printed the message and exit code.
+                    System.exit(0);  // exit code 0 for --help
                 }
                 if (cause instanceof IllegalArgumentException
                         || cause instanceof IllegalStateException) {
                     // Configuration/startup problems carry an actionable message.
+                    // The CLI parser already printed the message and exit code.
                     System.err.println("RedCake failed to start: " + cause.getMessage());
                     System.exit(2);
                 }

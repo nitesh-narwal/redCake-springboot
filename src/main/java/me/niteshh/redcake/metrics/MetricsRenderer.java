@@ -1,5 +1,6 @@
 package me.niteshh.redcake.metrics;
 
+import me.niteshh.redcake.cluster.ClusterState;
 import me.niteshh.redcake.config.MemoryConfig;
 import me.niteshh.redcake.persistence.AppendOnlyLog;
 import me.niteshh.redcake.replication.primary.ReplicaManager;
@@ -31,7 +32,9 @@ public class MetricsRenderer {
     private final AppendOnlyLog appendOnlyLog;
     private final MemoryConfig memoryConfig;
     private final SlowLog slowLog;
+    private final ClusterState clusterState;
 
+    /** Standalone wiring (no ZooKeeper). */
     public MetricsRenderer(
             ServerStats serverStats,
             CommandStats commandStats,
@@ -42,6 +45,22 @@ public class MetricsRenderer {
             MemoryConfig memoryConfig,
             SlowLog slowLog
     ) {
+        this(serverStats, commandStats, store, replicationStats, replicaManager, appendOnlyLog, memoryConfig,
+                slowLog, ClusterState.standalone());
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public MetricsRenderer(
+            ServerStats serverStats,
+            CommandStats commandStats,
+            KeyValueStore store,
+            ReplicationStats replicationStats,
+            ReplicaManager replicaManager,
+            AppendOnlyLog appendOnlyLog,
+            MemoryConfig memoryConfig,
+            SlowLog slowLog,
+            ClusterState clusterState
+    ) {
         this.serverStats = serverStats;
         this.commandStats = commandStats;
         this.store = store;
@@ -50,13 +69,18 @@ public class MetricsRenderer {
         this.appendOnlyLog = appendOnlyLog;
         this.memoryConfig = memoryConfig;
         this.slowLog = slowLog;
+        this.clusterState = clusterState;
     }
 
     /** @return the full {@code /metrics} response body */
     public String render() {
         StringBuilder out = new StringBuilder(4096);
 
-        gauge(out, "redcake_uptime_seconds", "Seconds since start", serverStats.uptimeSeconds());
+        gauge(out,
+                "redcake_uptime_seconds", "Seconds since start",
+                serverStats.uptimeSeconds()
+        );
+
         gauge(out, "redcake_connected_clients", "Currently connected clients", serverStats.connectedClients());
         counter(out, "redcake_connections_received_total", "Connections accepted", serverStats.totalConnections());
         counter(out, "redcake_connections_rejected_total", "Connections refused (maxclients)", serverStats.rejectedConnections());
@@ -77,6 +101,7 @@ public class MetricsRenderer {
         gauge(out, "redcake_aof_enabled", "1 if the append-only file is active", appendOnlyLog.isActive() ? 1 : 0);
         gauge(out, "redcake_aof_healthy", "0 if the last AOF write failed", appendOnlyLog.isHealthy() ? 1 : 0);
         gauge(out, "redcake_slowlog_entries", "Entries currently in the slow log", slowLog.length());
+        clusterMetrics(out);
 
         Runtime runtime = Runtime.getRuntime();
         gauge(out, "redcake_jvm_memory_used_bytes", "JVM heap in use", runtime.totalMemory() - runtime.freeMemory());
@@ -85,6 +110,25 @@ public class MetricsRenderer {
         commandCounters(out);
         latencyHistogram(out);
         return out.toString();
+    }
+
+    private void clusterMetrics(StringBuilder out) {
+        gauge(out, "redcake_cluster_enabled", "1 if ZooKeeper-coordinated failover is on", clusterState.isManaged() ? 1 : 0);
+        if (!clusterState.isManaged()) {
+            return;
+        }
+        gauge(out, "redcake_cluster_is_primary", "1 if this node is the primary and may accept writes",
+                clusterState.mayWrite() ? 1 : 0);
+        gauge(out, "redcake_cluster_fenced", "1 if this node is the elected primary but must not write right now",
+                clusterState.isFenced() ? 1 : 0);
+        gauge(out, "redcake_cluster_epoch", "Leader epoch this node leads or follows (-1 = none)", clusterState.epoch());
+        gauge(out, "redcake_cluster_zk_connected", "1 if the ZooKeeper connection is healthy",
+                clusterState.zkState() == ClusterState.ZkState.CONNECTED ? 1 : 0);
+        gauge(out, "redcake_cluster_members", "Nodes registered in ZooKeeper (as of the last election)", clusterState.members());
+        gauge(out, "redcake_cluster_lease_remaining_milliseconds", "Time left of the primary's write lease",
+                clusterState.leaseRemainingMillis());
+        counter(out, "redcake_cluster_promotions_total", "Times this node became the primary", clusterState.promotions());
+        counter(out, "redcake_cluster_demotions_total", "Times this node gave up the primary role", clusterState.demotions());
     }
 
     private void commandCounters(StringBuilder out) {

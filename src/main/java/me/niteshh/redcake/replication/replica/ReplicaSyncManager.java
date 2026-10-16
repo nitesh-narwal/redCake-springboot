@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import me.niteshh.redcake.command.CommandHandler;
 import me.niteshh.redcake.config.RedCakeAuthConfig;
 import me.niteshh.redcake.config.RedCakeServerConfig;
+import me.niteshh.redcake.replication.ReplicationBacklog;
 import me.niteshh.redcake.replication.ReplicationConfig;
 import me.niteshh.redcake.replication.RespCommandCodec;
 import me.niteshh.redcake.resp.ErrorValue;
@@ -42,6 +43,11 @@ import java.util.concurrent.ThreadLocalRandom;
  *       once when the primary asks with {@code REPLCONF GETACK} (used by {@code WAIT}).</li>
  * </ol>
  *
+ * <h3>Mirroring the stream</h3>
+ * Every applied command is also appended to the node's own {@link ReplicationBacklog} (the same bytes the
+ * offset counts). If this replica is promoted after a failover, the other replicas can then continue from it
+ * with a partial resync, because the bytes they are missing are in its backlog.
+ *
  * <h3>Failure handling</h3>
  * The socket has a 60 s read timeout; the primary pings every 10 s, so silence
  * means a dead primary and triggers a reconnect with exponential backoff
@@ -58,6 +64,10 @@ public class ReplicaSyncManager {
     private static final long INITIAL_BACKOFF_MILLIS = 1_000;
     private static final long MAX_BACKOFF_MILLIS = 30_000;
     private static final long ACK_INTERVAL_MILLIS = 1_000;
+    /** A primary that says it is not ready yet is retried quickly instead of with exponential backoff. */
+    private static final long NOT_READY_RETRY_MILLIS = 150;
+    /** How long {@link #stop()} waits for the applier thread to finish its current command. */
+    private static final long STOP_JOIN_MILLIS = 2_000;
 
     private final PrimaryConnection primaryConnection;
     private final ReplicationConfig replicationConfig;
@@ -106,15 +116,27 @@ public class ReplicaSyncManager {
                 .start(() -> runSyncLoop(mine));
     }
 
-    /** Stops the sync thread and closes the primary connection. */
+    /**
+     * Stops the sync thread and closes the primary connection. On return the thread has stopped applying
+     * commands (it is given a moment to finish the one it may be in the middle of), so a caller that promotes
+     * this node next never races with a late write from the old stream.
+     */
     public synchronized void stop() {
         running = false;
         generation++; // orphan any thread that is still winding down
         primaryConnection.close();
         stats.setMasterLinkUp(false);
-        if (syncThread != null) {
-            syncThread.interrupt();
-            syncThread = null;
+        Thread stopping = syncThread;
+        syncThread = null;
+        if (stopping != null) {
+            stopping.interrupt();
+            if (stopping != Thread.currentThread()) {
+                try {
+                    stopping.join(STOP_JOIN_MILLIS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
         }
     }
 
@@ -128,9 +150,13 @@ public class ReplicaSyncManager {
         long backoff = INITIAL_BACKOFF_MILLIS;
 
         while (running && generation == mine) {
+            boolean notReady = false;
             try {
                 synchronizeOnce(mine);
                 backoff = INITIAL_BACKOFF_MILLIS; // we got far enough to be synced: reset
+            } catch (PrimaryNotReadyException e) {
+                notReady = true; // e.g. a primary elected a moment ago that is still promoting itself
+                log.debug("Primary is not ready yet: {}", e.getMessage());
             } catch (Exception e) {
                 if (running && generation == mine) {
                     log.warn("Replica connection lost: {}", e.getMessage());
@@ -143,13 +169,18 @@ public class ReplicaSyncManager {
             }
 
             if (running && generation == mine) {
+                long pause = notReady
+                        ? NOT_READY_RETRY_MILLIS + ThreadLocalRandom.current().nextLong(NOT_READY_RETRY_MILLIS / 2 + 1)
+                        : backoff + ThreadLocalRandom.current().nextLong(backoff / 2 + 1);
                 try {
-                    Thread.sleep(backoff + ThreadLocalRandom.current().nextLong(backoff / 2 + 1));
+                    Thread.sleep(pause);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     return;
                 }
-                backoff = Math.min(backoff * 2, MAX_BACKOFF_MILLIS);
+                if (!notReady) {
+                    backoff = Math.min(backoff * 2, MAX_BACKOFF_MILLIS);
+                }
             }
         }
     }
@@ -189,12 +220,16 @@ public class ReplicaSyncManager {
         List<String> hello = readHello(input);
         boolean full = "FULLRESYNC".equals(hello.get(1));
 
+        ReplicationBacklog mirror = stats.backlog();
         if (full) {
             store.clear();          // the snapshot is the complete truth
             stats.setSynced(false); // a half-loaded snapshot must never be resumed from
             stats.setLoading(true); // clients get -LOADING instead of a partial dataset
         }
         stats.adopt(hello.get(2), Long.parseLong(hello.get(3)));
+        if (mirror != null && (full || mirror.endOffset() != stats.offset())) {
+            mirror.reset(stats.offset()); // the mirror restarts where the primary's stream continues
+        }
         log.info("{} with primary {}:{} (offset {})",
                 full ? "Full resync" : "Partial resync",
                 replicationConfig.getPrimaryHost(), replicationConfig.getPrimaryPort(),
@@ -230,7 +265,11 @@ public class ReplicaSyncManager {
                     }
                 }
                 if (!inSnapshot) {
-                    stats.advance(RespCommandCodec.encode(command).length);
+                    byte[] encoded = RespCommandCodec.encode(command);
+                    stats.advance(encoded.length);
+                    if (mirror != null) {
+                        mirror.append(encoded);
+                    }
                 }
                 if (getAck) {
                     sendAck(output);
@@ -284,6 +323,13 @@ public class ReplicaSyncManager {
         }
     }
 
+    /** The node we connected to answered {@code -NOTPRIMARY}: it is not (yet) the primary; try again soon. */
+    private static final class PrimaryNotReadyException extends IOException {
+        PrimaryNotReadyException(String message) {
+            super(message);
+        }
+    }
+
     private String readLine(BufferedInputStream input) throws IOException {
         StringBuilder value = new StringBuilder();
         int current;
@@ -312,7 +358,11 @@ public class ReplicaSyncManager {
         input.reset();
 
         if (firstByte == '-') {
-            throw new IOException("Primary rejected PSYNC: " + readLine(input));
+            String error = readLine(input);
+            if (error.startsWith("-NOTPRIMARY")) {
+                throw new PrimaryNotReadyException(error);
+            }
+            throw new IOException("Primary rejected PSYNC: " + error);
         }
 
         List<String> hello = parser.parseCommand(input);

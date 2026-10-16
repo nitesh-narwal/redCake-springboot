@@ -1,5 +1,6 @@
 package me.niteshh.redcake.command.commands.reads;
 
+import me.niteshh.redcake.cluster.ClusterState;
 import me.niteshh.redcake.command.CommandSupport;
 import me.niteshh.redcake.command.RedCakeCommand;
 import me.niteshh.redcake.config.MemoryConfig;
@@ -25,7 +26,7 @@ import java.util.Locale;
  * and {@code redis-cli INFO} work.
  *
  * <p>Sections: {@code server, clients, memory, persistence, stats,
- * replication, keyspace}; {@code all}/{@code default}/{@code everything}
+ * replication, cluster, keyspace}; {@code all}/{@code default}/{@code everything}
  * print all of them; an unknown section yields an empty reply.
  */
 @Component
@@ -42,8 +43,9 @@ public class InfoCommand implements RedCakeCommand {
     private final PersistenceConfig persistenceConfig;
     private final MemoryConfig memoryConfig;
     private final CommandStats commandStats;
+    private final ClusterState clusterState;
 
-    @Autowired
+    /** Standalone wiring (no ZooKeeper): {@code INFO cluster} reports {@code cluster_enabled:0}. */
     public InfoCommand(
             KeyValueStore store,
             ReplicationConfig replicationConfig,
@@ -54,6 +56,22 @@ public class InfoCommand implements RedCakeCommand {
             MemoryConfig memoryConfig,
             CommandStats commandStats
     ) {
+        this(store, replicationConfig, serverStats, replicationStats, replicaManager, persistenceConfig,
+                memoryConfig, commandStats, ClusterState.standalone());
+    }
+
+    @Autowired
+    public InfoCommand(
+            KeyValueStore store,
+            ReplicationConfig replicationConfig,
+            ServerStats serverStats,
+            ReplicationStats replicationStats,
+            ReplicaManager replicaManager,
+            PersistenceConfig persistenceConfig,
+            MemoryConfig memoryConfig,
+            CommandStats commandStats,
+            ClusterState clusterState
+    ) {
         this.store = store;
         this.replicationConfig = replicationConfig;
         this.serverStats = serverStats;
@@ -62,6 +80,7 @@ public class InfoCommand implements RedCakeCommand {
         this.persistenceConfig = persistenceConfig;
         this.memoryConfig = memoryConfig;
         this.commandStats = commandStats;
+        this.clusterState = clusterState;
     }
 
     /** Convenience constructor with standalone (empty) statistics; used by unit tests. */
@@ -102,6 +121,7 @@ public class InfoCommand implements RedCakeCommand {
             case "stats" -> statsInfo();
             case "commandstats" -> commandStatsInfo();
             case "replication" -> replicationInfo();
+            case "cluster" -> clusterInfo();
             case "keyspace" -> keyspaceInfo();
             default -> "";
         };
@@ -110,7 +130,7 @@ public class InfoCommand implements RedCakeCommand {
 
     private String allInfo() {
         return serverInfo() + clientsInfo() + memoryInfo() + persistenceInfo()
-                + statsInfo() + replicationInfo() + commandStatsInfo() + keyspaceInfo();
+                + statsInfo() + replicationInfo() + clusterInfo() + commandStatsInfo() + keyspaceInfo();
     }
 
     private String serverInfo() {
@@ -167,8 +187,9 @@ public class InfoCommand implements RedCakeCommand {
         info.append("role:").append(replica ? "replica" : "primary").append("\r\n");
 
         if (replica) {
-            info.append("master_host:").append(replicationConfig.getPrimaryHost()).append("\r\n");
-            info.append("master_port:").append(replicationConfig.getPrimaryPort()).append("\r\n");
+            String host = replicationConfig.getPrimaryHost(); // null: no primary assigned yet (cluster mode)
+            info.append("master_host:").append(host == null ? "" : host).append("\r\n");
+            info.append("master_port:").append(host == null ? 0 : replicationConfig.getPrimaryPort()).append("\r\n");
             info.append("master_link_status:")
                     .append(replicationStats.isMasterLinkUp() ? "up" : "down")
                     .append("\r\n");
@@ -187,7 +208,10 @@ public class InfoCommand implements RedCakeCommand {
         }
 
         info.append("master_replid:").append(replicationStats.replid()).append("\r\n");
+        String replid2 = replicationStats.replid2();
+        info.append("master_replid2:").append(replid2.isEmpty() ? "0".repeat(40) : replid2).append("\r\n");
         info.append("master_repl_offset:").append(replicationStats.offset()).append("\r\n");
+        info.append("second_repl_offset:").append(replicationStats.secondReplidOffset()).append("\r\n");
         var backlog = replicationStats.backlog();
         if (!replica && backlog != null) {
             info.append("repl_backlog_active:1\r\n");
@@ -197,6 +221,35 @@ public class InfoCommand implements RedCakeCommand {
         }
         info.append("\r\n");
         return info.toString();
+    }
+
+    /**
+     * Cluster (failover) state. {@code cluster_fenced:1} means this node is the elected primary but may not
+     * write right now (ZooKeeper suspended, lease not renewed, or a hand-over in progress).
+     */
+    private String clusterInfo() {
+        StringBuilder info = new StringBuilder("# Cluster\r\n");
+        info.append("cluster_enabled:").append(clusterState.isManaged() ? 1 : 0).append("\r\n");
+        if (clusterState.isManaged()) {
+            info.append("cluster_name:").append(clusterState.clusterName()).append("\r\n");
+            info.append("cluster_node_id:").append(clusterState.nodeId()).append("\r\n");
+            info.append("cluster_state:").append(clusterState.mode().wire()).append("\r\n");
+            info.append("cluster_zk_state:").append(clusterState.zkState().wire()).append("\r\n");
+            info.append("cluster_fenced:").append(clusterState.isFenced() ? 1 : 0).append("\r\n");
+            info.append("cluster_epoch:").append(clusterState.epoch()).append("\r\n");
+            info.append("cluster_leader_id:").append(clusterState.leaderNodeId()).append("\r\n");
+            info.append("cluster_leader:").append(clusterState.leaderAddress()).append("\r\n");
+            info.append("cluster_data_epoch:").append(clusterState.dataEpoch()).append("\r\n");
+            info.append("cluster_data_trusted:").append(clusterState.isDataTrusted() ? 1 : 0).append("\r\n");
+            info.append("cluster_members:").append(clusterState.members()).append("\r\n");
+            info.append("cluster_lease_remaining_ms:").append(clusterState.leaseRemainingMillis()).append("\r\n");
+            info.append("cluster_promotions:").append(clusterState.promotions()).append("\r\n");
+            info.append("cluster_demotions:").append(clusterState.demotions()).append("\r\n");
+            if (!clusterState.electionStatus().isEmpty()) {
+                info.append("cluster_election:").append(clusterState.electionStatus()).append("\r\n");
+            }
+        }
+        return info.append("\r\n").toString();
     }
 
     /** {@code cmdstat_<name>:calls=..,usec=..,usec_per_call=..,failed_calls=..} per command. */

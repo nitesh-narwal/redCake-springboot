@@ -28,7 +28,8 @@ public class RespWriter {
      */
     private static final Set<String> ERROR_CODES = Set.of(
             "ERR", "NOAUTH", "WRONGPASS", "READONLY", "MISCONF", "NOPROTO",
-            "WRONGTYPE", "OOM", "LOADING", "BUSY", "NOPERM", "EXECABORT"
+            "WRONGTYPE", "OOM", "LOADING", "BUSY", "NOPERM", "EXECABORT",
+            "CLUSTERDOWN", "NOREPLICAS", "NOTPRIMARY"
     );
 
     private static final byte[] CRLF = {'\r', '\n'};

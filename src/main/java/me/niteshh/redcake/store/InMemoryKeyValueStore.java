@@ -204,6 +204,22 @@ public class InMemoryKeyValueStore implements KeyValueStore {
         return remaining;
     }
 
+    @Override
+    public long expiresAt(String key) {
+        ValueEntry entry = data.get(key);
+        if (entry == null) {
+            return -2;
+        }
+        if (entry.expiresAt() == null) {
+            return -1;
+        }
+        if (entry.expiresAt() <= System.currentTimeMillis()) {
+            evictIfExpired(key);
+            return -2;
+        }
+        return entry.expiresAt();
+    }
+
     /** Redis rounds the millisecond TTL to the nearest second. */
     @Override
     public long ttl(String key) {

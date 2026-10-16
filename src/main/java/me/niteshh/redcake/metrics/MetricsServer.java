@@ -6,7 +6,10 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import me.niteshh.redcake.cli.CommandLineConfig;
+import me.niteshh.redcake.cluster.ClusterState;
 import me.niteshh.redcake.config.RedCakeServerConfig;
+import me.niteshh.redcake.replication.ReplicationConfig;
+import me.niteshh.redcake.replication.ReplicationRole;
 import me.niteshh.redcake.persistence.AppendOnlyLog;
 import org.springframework.stereotype.Component;
 
@@ -23,6 +26,9 @@ import java.util.concurrent.Executors;
  *   <li>{@code GET /health} - {@code 200 ok}, or {@code 503} when the AOF
  *       can no longer be written (the node refuses writes then); suitable as a
  *       Kubernetes/Docker health probe.</li>
+ *   <li>{@code GET /primary} - {@code 200} only on the node that may accept writes right now, otherwise
+ *       {@code 503}; point a load balancer's write pool at it and failover needs no client changes.</li>
+ *   <li>{@code GET /replica} - {@code 200} on a replica that holds a dataset it can vouch for (read pool).</li>
  * </ul>
  * It uses the JDK's built-in {@code com.sun.net.httpserver}, so there is no
  * extra dependency, and it listens on the same address as the database
@@ -37,6 +43,8 @@ public class MetricsServer {
     private final String bindAddress;
     private final MetricsRenderer renderer;
     private final AppendOnlyLog appendOnlyLog;
+    private final ReplicationConfig replicationConfig;
+    private final ClusterState clusterState;
 
     private HttpServer server;
 
@@ -46,6 +54,21 @@ public class MetricsServer {
             MetricsRenderer renderer,
             AppendOnlyLog appendOnlyLog
     ) {
+        this(commandLineConfig, serverConfig, renderer, appendOnlyLog,
+                commandLineConfig.getReplicationConfig(), ClusterState.standalone());
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public MetricsServer(
+            CommandLineConfig commandLineConfig,
+            RedCakeServerConfig serverConfig,
+            MetricsRenderer renderer,
+            AppendOnlyLog appendOnlyLog,
+            ReplicationConfig replicationConfig,
+            ClusterState clusterState
+    ) {
+        this.replicationConfig = replicationConfig;
+        this.clusterState = clusterState;
         this.port = commandLineConfig.getMetricsPort();
         this.bindAddress = serverConfig.getBindAddress();
         this.renderer = renderer;
@@ -63,6 +86,15 @@ public class MetricsServer {
         server.createContext("/health", exchange -> {
             boolean healthy = appendOnlyLog.isHealthy();
             respond(exchange, healthy ? 200 : 503, "text/plain", healthy ? "ok\n" : "aof write failure\n");
+        });
+        server.createContext("/primary", exchange -> {
+            boolean writable = replicationConfig.getRole() == ReplicationRole.PRIMARY
+                    && clusterState.mayWrite() && appendOnlyLog.isHealthy();
+            respond(exchange, writable ? 200 : 503, "text/plain", writable ? "primary\n" : "not the writable primary\n");
+        });
+        server.createContext("/replica", exchange -> {
+            boolean readable = replicationConfig.getRole() == ReplicationRole.REPLICA && clusterState.isDataTrusted();
+            respond(exchange, readable ? 200 : 503, "text/plain", readable ? "replica\n" : "not a ready replica\n");
         });
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         server.start();

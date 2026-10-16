@@ -50,6 +50,14 @@ import java.util.concurrent.locks.ReentrantLock;
  * Delegates to {@link ReplicaSyncManager}. {@link #becomeReplicaOf} and
  * {@link #promoteToPrimary} implement {@code REPLICAOF host port} and
  * {@code REPLICAOF NO ONE}.
+ *
+ * <h3>Failover (ZooKeeper-coordinated mode)</h3>
+ * The failover coordinator drives the same machinery through {@link #promoteToPrimary} (an elected replica
+ * starts a new history but keeps the old id valid, so the other replicas continue with a <em>partial</em>
+ * resync), {@link #followPrimary} (point at the elected primary, keeping the history so a former primary can
+ * also resume) and {@link #stepDown} (a primary that lost its leadership becomes a read-only node without a
+ * primary until it is told who the new one is). Because every replica mirrors the stream it applies into its
+ * own {@link ReplicationBacklog}, any of them can serve the others after a promotion.
  */
 @Slf4j
 @Component
@@ -113,7 +121,11 @@ public class ReplicationManager {
         );
 
         if (isReplica()) {
-            log.info("Primary configured at {}:{}", config.getPrimaryHost(), config.getPrimaryPort());
+            if (config.getPrimaryHost() == null) {
+                log.info("Replica without a primary: waiting for the cluster coordinator to assign one");
+            } else {
+                log.info("Primary configured at {}:{}", config.getPrimaryHost(), config.getPrimaryPort());
+            }
             replicaSyncManager.start();
         }
     }
@@ -176,7 +188,7 @@ public class ReplicationManager {
         primaryWriteLock.lock();
         try {
             ReplicationBacklog current = backlog;
-            if (replid.equals(stats.replid()) && current.canServe(offset)) {
+            if (stats.continuesHistory(replid, offset) && current.canServe(offset)) {
                 missed = current.slice(offset);
             } else {
                 store.forEachSnapshot(entries::add);
@@ -303,23 +315,96 @@ public class ReplicationManager {
 
     /**
      * {@code REPLICAOF NO ONE}: stop following the primary and accept writes.
-     * Starts a new replication history (new replid, empty backlog at the
-     * current offset) so replicas of the old primary cannot confuse the two.
+     * Starts a new replication history (new replid) so replicas of the old primary cannot confuse the two -
+     * but the old id stays valid up to the current offset ({@code replid2}), so those replicas can resume from
+     * this node with a partial resync as long as the bytes they miss are still in the backlog. The backlog
+     * kept while this node was a replica holds exactly those bytes; it is only replaced if it does not line up
+     * with the offset (a node that never mirrored a stream).
      */
     public void promoteToPrimary() {
         log.info("Promoting to primary");
-        replicaSyncManager.stop();
+        replicaSyncManager.stop(); // returns only after the stream applier has quiesced
         primaryWriteLock.lock();
         try {
             config.becomePrimary();
-            stats.startNewHistory();
+            stats.shiftReplicationId();
             stats.setMasterLinkUp(false);
             stats.setLoading(false);
-            backlog = new ReplicationBacklog(config.getBacklogBytes(), stats.offset());
-            stats.setBacklog(backlog);
+            if (backlog.endOffset() != stats.offset()) {
+                backlog = new ReplicationBacklog(config.getBacklogBytes(), stats.offset());
+                stats.setBacklog(backlog);
+            }
         } finally {
             primaryWriteLock.unlock();
         }
+    }
+
+    /**
+     * Failover: become a replica of the newly elected primary at {@code host:port}. Unlike
+     * {@link #becomeReplicaOf} this keeps the replication history: a node that was a primary (or a replica
+     * of the previous one) asks to continue at its offset, and the new primary decides - by comparing replid
+     * and offset - between a partial resync and a full one that discards writes nobody else has.
+     */
+    public void followPrimary(String host, int port) {
+        log.info("Following primary {}:{}", host, port);
+        primaryWriteLock.lock();
+        try {
+            boolean wasPrimary = isPrimary();
+            config.becomeReplicaOf(host, port);
+            replicaManager.closeAll();
+            if (wasPrimary) {
+                stats.setSynced(true); // its dataset is a complete copy as of (replid, offset)
+            }
+            stats.setMasterLinkUp(false);
+        } finally {
+            primaryWriteLock.unlock();
+        }
+        replicaSyncManager.restart();
+    }
+
+    /**
+     * A primary that lost its leadership: stop accepting writes at once, disconnect the replicas (they will
+     * be pointed at the new primary) and wait, read-only and without a primary, to be told who it is.
+     * The history is kept so this node can resume, rather than fully resync, if its data is a prefix of the
+     * new primary's.
+     */
+    public void stepDown() {
+        log.info("Stepping down from primary");
+        primaryWriteLock.lock();
+        try {
+            config.becomeDetached();
+            replicaManager.closeAll();
+            stats.setSynced(true);
+            stats.setMasterLinkUp(false);
+        } finally {
+            primaryWriteLock.unlock();
+        }
+        replicaSyncManager.stop();
+    }
+
+    /**
+     * @return how many attached replicas acknowledged within {@code maxLagSeconds}
+     * ({@code min-replicas-to-write} counts these)
+     */
+    public int goodReplicas(int maxLagSeconds) {
+        int good = 0;
+        for (ReplicaConnection replica : replicaManager.getReplicas()) {
+            if (replica.getAckOffset() >= 0 && replica.getLagSeconds() <= maxLagSeconds) {
+                good++;
+            }
+        }
+        return good;
+    }
+
+    /** {@code min-replicas-to-write}: {@code true} if the configured number of good replicas is attached (or none is required). */
+    public boolean hasEnoughReplicasToWrite() {
+        int required = config.getMinReplicasToWrite();
+        return required == 0 || goodReplicas(config.getMinReplicasMaxLagSeconds()) >= required;
+    }
+
+    /** @return the number of attached replicas (for the graceful hand-over, which waits for all of them) */
+    public int replicaCount() {
+        return replicaManager.replicaCount();
     }
 
     // ------------------------------------------------------------ accessors

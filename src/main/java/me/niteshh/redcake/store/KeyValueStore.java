@@ -120,6 +120,9 @@ public interface KeyValueStore {
     /** Remaining time to live in milliseconds; -2 missing, -1 no TTL. */
     long pttl(String key);
 
+    /** The stored absolute expiry (epoch ms), exactly as set; -2 missing, -1 no TTL. */
+    long expiresAt(String key);
+
     /**
      * Moves {@code source} to {@code destination}, overwriting it and keeping the TTL.
      *

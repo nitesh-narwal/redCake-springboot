@@ -1,0 +1,45 @@
+# HAProxy in front of a RedCake failover cluster: clients keep ONE address; after a failover the load balancer
+# notices within a second which node is the primary. Not tested in the authoring environment - treat as a template.
+#
+# RedCake's metrics port (--metrics-port 9100) answers the health checks:
+#   GET /primary  -> 200 only on the node that may accept writes right now (leader with a fresh lease)
+#   GET /replica  -> 200 on a replica that holds a dataset it can vouch for
+# Nodes need --metrics-port; the endpoints are unauthenticated, keep the port on the private network.
+
+global
+    maxconn 4096
+
+defaults
+    mode tcp
+    timeout connect 3s
+    timeout client  1h
+    timeout server  1h
+
+# Writes (and reads that must be current): always the primary.
+frontend redis_primary
+    bind *:6400
+    default_backend primary
+
+backend primary
+    option httpchk GET /primary
+    http-check expect status 200
+    # on-marked-down shutdown-sessions: drop connections to a node that stopped being the primary,
+    # so clients reconnect instead of getting -READONLY / -CLUSTERDOWN on a half-dead connection.
+    default-server inter 1s fall 2 rise 1 on-marked-down shutdown-sessions port 9100
+    server node1 node1:6379 check
+    server node2 node2:6379 check
+    server node3 node3:6379 check
+
+# Reads that may be slightly stale: spread over the replicas.
+frontend redis_replicas
+    bind *:6401
+    default_backend replicas
+
+backend replicas
+    balance roundrobin
+    option httpchk GET /replica
+    http-check expect status 200
+    default-server inter 2s fall 2 rise 1 port 9100
+    server node1 node1:6379 check
+    server node2 node2:6379 check
+    server node3 node3:6379 check

@@ -1,6 +1,7 @@
 package me.niteshh.redcake.config;
 
 import me.niteshh.redcake.cli.CommandLineConfig;
+import me.niteshh.redcake.cluster.ClusterConfig;
 import me.niteshh.redcake.replication.ReplicationConfig;
 import me.niteshh.redcake.stats.SlowLog;
 import org.springframework.context.annotation.Bean;
@@ -23,6 +24,11 @@ public class RedCakeConfiguration {
     @Bean
     public ReplicationConfig replicationConfig(CommandLineConfig commandLineConfig) {
         return commandLineConfig.getReplicationConfig();
+    }
+
+    @Bean
+    public ClusterConfig clusterConfig(CommandLineConfig commandLineConfig) {
+        return commandLineConfig.getClusterConfig();
     }
 
     @Bean

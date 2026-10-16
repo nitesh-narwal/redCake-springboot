@@ -52,6 +52,11 @@ import java.util.concurrent.locks.ReentrantLock;
  *
  * <p>Only a primary logs. Replicas rebuild state from their primary, so the
  * AOF is ignored (with a warning) when running with {@code --replicaof}.
+ *
+ * <p>A node whose role is decided by ZooKeeper ({@code --zk-connect}) cannot know at startup whether it will
+ * be the primary. It therefore <em>replays</em> its file (so it can lead with that data after a cold start)
+ * but does not log: logging starts in {@link #activateFromSnapshot()} if the node is elected, exactly like a
+ * promoted replica, and {@link #deactivate()} stops it again if the node loses the role.
  */
 @Slf4j
 @Component
@@ -93,7 +98,8 @@ public class AppendOnlyLog {
         if (!config.isEnabled()) {
             return;
         }
-        if (replicationConfig != null && replicationConfig.getRole() == ReplicationRole.REPLICA) {
+        boolean coordinated = replicationConfig != null && replicationConfig.isCoordinated();
+        if (replicationConfig != null && replicationConfig.getRole() == ReplicationRole.REPLICA && !coordinated) {
             log.warn("AOF is ignored on replicas; use the primary's AOF for recovery");
             return;
         }
@@ -106,6 +112,11 @@ public class AppendOnlyLog {
 
         if (Files.exists(file)) {
             replay(file);
+        }
+
+        if (coordinated) {
+            log.info("AOF: logging starts when this node is elected primary");
+            return;
         }
 
         openForAppend(file);
