@@ -1,5 +1,8 @@
 package me.niteshh.redcake.store;
 
+import me.niteshh.redcake.json.JsonDocument;
+import me.niteshh.redcake.vector.VectorSet;
+
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -14,6 +17,10 @@ import java.util.Set;
  *   <li>{@code LIST} - {@code ArrayList<String>}</li>
  *   <li>{@code SET} - {@code LinkedHashSet<String>}</li>
  *   <li>{@code ZSET} - {@link ZSet} (sorted by score, then member)</li>
+ *   <li>{@code VECTORSET} - {@link VectorSet} (named embeddings searchable by similarity; thread-safe by
+ *       itself, see {@link KeyValueStore#peek})</li>
+ *   <li>{@code JSON} - {@link JsonDocument} (one JSON document, changed and read by path; {@code TYPE} says
+ *       {@code ReJSON-RL}, the name RedisJSON uses, so clients that look at it are not surprised)</li>
  * </ul>
  */
 public enum ValueType {
@@ -21,7 +28,9 @@ public enum ValueType {
     HASH("hash"),
     LIST("list"),
     SET("set"),
-    ZSET("zset");
+    ZSET("zset"),
+    VECTORSET("vectorset"),
+    JSON("ReJSON-RL");
 
     private final String redisName;
 
@@ -42,6 +51,8 @@ public enum ValueType {
             case List<?> ignored -> LIST;
             case Set<?> ignored -> SET;
             case ZSet ignored -> ZSET;
+            case VectorSet ignored -> VECTORSET;
+            case JsonDocument ignored -> JSON;
             default -> throw new IllegalArgumentException(
                     "Unsupported value class: " + value.getClass());
         };

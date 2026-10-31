@@ -2,6 +2,8 @@ package me.niteshh.redcake.store;
 
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
+import me.niteshh.redcake.json.JsonDocument;
+import me.niteshh.redcake.vector.VectorSet;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -424,6 +426,23 @@ public class InMemoryKeyValueStore implements KeyValueStore {
         return called[0] ? (T) result[0] : reader.apply(null);
     }
 
+    /** Lock-free, like {@link #get}: the caller synchronizes on the value itself (see {@link KeyValueStore#peek}). */
+    @Override
+    public Object peek(String key, ValueType type) {
+        ValueEntry entry = data.get(key);
+        if (entry == null) {
+            return null;
+        }
+        if (entry.isExpired()) {
+            evictIfExpired(key);
+            return null;
+        }
+        if (entry.type() != type) {
+            throw new WrongTypeException();
+        }
+        return entry.value();
+    }
+
     @Override
     @SuppressWarnings("unchecked")
     public <T> T mutate(String key, ValueType type, Supplier<Object> factory, Function<Object, T> mutator) {
@@ -557,7 +576,10 @@ public class InMemoryKeyValueStore implements KeyValueStore {
                 if (entry.isExpiredAt(now)) {
                     return entry; // reaped lazily/by the worker; just skip it
                 }
-                captured[0] = new SnapshotEntry(k, copyOf(entry.value()), entry.expiresAt());
+                Object copy = copyOf(entry.value());
+                if (copy != null) {
+                    captured[0] = new SnapshotEntry(k, copy, entry.expiresAt());
+                }
                 return entry;
             });
             if (captured[0] != null) {
@@ -566,13 +588,17 @@ public class InMemoryKeyValueStore implements KeyValueStore {
         }
     }
 
-    /** Strings are immutable; collections are copied so the snapshot is stable. */
+    /** Strings are immutable; collections are copied so the snapshot is stable. {@code null}: nothing to snapshot. */
     private static Object copyOf(Object value) {
         return switch (value) {
             case Map<?, ?> map -> new LinkedHashMap<>(map);
             case List<?> list -> new ArrayList<>(list);
             case Set<?> set -> new LinkedHashSet<>(set);
             case ZSet zset -> zset.copy();
+            // A compact binary copy, made under the set's read lock. A set whose restore has not finished is skipped.
+            case VectorSet vectors -> vectors.isRestoring() ? null : vectors.dump();
+            // the commands that rebuild it, as text: stable once the key's lock is released
+            case JsonDocument json -> json.isUnset() ? null : json.dump();
             default -> value;
         };
     }

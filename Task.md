@@ -600,3 +600,90 @@ PSYNC2-style `replid2` + stream mirroring so replicas resume after a promotion, 
 2. Persist `replid`/offset with the AOF so a restarted ex-primary can be ranked (and resume) by its true position.
 3. Synchronous replication option (`WAIT`-per-write) for workloads that cannot lose a single acknowledged write.
 4. Raft (e.g. Apache Ratis) as a ZooKeeper-free alternative.
+
+---
+
+## 14. Progress log — vector search pass (2026-10-25)
+
+### Added
+Vector sets ("vector search and embedding storage"), designed in `docs/adr/0006-vector-search.md`: the `vector` package
+(`VectorSet` HNSW index, `Quantization`, `DistanceKernel` with `ScalarKernel` / `SimdKernel`, `SearchContext`, `LongHeap`),
+`VectorCommands` (`VADD VSIM VREM VCARD VDIM VEMB VINFO VGETATTR VSETATTR VISMEMBER VRANDMEMBER VLINKS`, admin-only `VRESTORE`),
+`RedCakeCommand.prepare` + `PreparedWork` (the read-only share of a write runs before the global write lock),
+`KeyValueStore.peek`, a lazy `SnapshotEntry.commands()` (a vector set snapshots as `VRESTORE` chunks), `ValueType.VECTORSET`,
+`MemoryEstimator` support, `scripts/vector-benchmark.sh` (`VectorBenchmark`, `VectorLoad`), the `--add-modules
+jdk.incubator.vector` plumbing (pom, Dockerfile, systemd unit). The README was rewritten with the system design and diagrams.
+
+### Verified
+- 65 new tests (index: recall, delete and repair, restore validation incl. random bit flips, both kernels; commands; real sockets
+  with replication and AOF): the suite is **317 tests, 0 failures**.
+- Measured on a 2-core / 4-thread laptop shared with a browser and an IDE (medians of alternating runs, so values still wobble):
+  SIMD 1,150 inserts/s against 390 scalar; search p50 0.32 ms against 0.72 ms; recall@10 0.984 against exact float32 with int8;
+  639 bytes per 384-dimensional vector; an ordinary `SET` had p50 38 us while about 860 `VADD`/s streamed in (34 us idle);
+  loading a dump 0.07 s against 17 s to insert again. Details in ADR 0006.
+- No regression of existing commands: previous commit's jar against the new one, `redis-benchmark -c 50 -P 16 -d 64`, 6 alternating
+  rounds, medians: SET 96 %, GET 98 %, INCR 100 %, HSET 98 %, ZADD 104 %, LPUSH 101 % (noise 10-20 %).
+- The packaged jar was driven with `redis-cli`, with and without the SIMD flag, primary and replica.
+
+### Not verified / not done
+- Not compared with a real Redis 8 server (none installed here): reply formats follow the documentation.
+- `FILTER` expressions and `REDUCE` answer with an error; attributes are stored and returned only.
+- Copy-on-write snapshots (the dump copies the set), background compaction, per-element TTL.
+- Only `VADD` uses the `prepare` hook.
+- Inserting from many connections at once did not get faster on the 2-core machine (in-process it scaled 1,500 -> 2,100 -> 2,650
+  inserts/s with 1 / 2 / 4 threads); needs a bigger machine to judge.
+- The Dockerfile change (enable the Vector API only when the JVM has the module) was not built into an image here.
+
+### Suggested next steps
+1. Run `scripts/vector-benchmark.sh` on a quieter, bigger machine with 768 dimensions and a million vectors.
+2. Replay the same data against Redis 8 and compare `VSIM` answers and reply formats.
+3. `FILTER` over the JSON attributes; `REDUCE`.
+4. Copy-on-write snapshot of large sets so a rewrite or full sync does not copy them under the write lock.
+
+---
+
+## 15. Progress log — JSON documents pass (2026-10-31)
+
+### Added
+JSON documents ("JSON/document values" for records with text, embeddings, metadata and status), designed in
+`docs/adr/0007-json-documents.md`: the `json` package (`JsonDocument`, `JsonObject`, `JsonArray` with unboxed number arrays,
+`JsonParser`, `JsonWriter`, `JsonPath` with filters, `KeyPool`, `Json`), `JsonCommands` (22 `JSON.*` commands, RedisJSON's
+family), `ValueType.JSON` (`ReJSON-RL`), snapshot support in `SnapshotEntry` (a document too big for one command is rebuilt
+from pieces), `MemoryEstimator` support, `LambdaCommand.preparedBy` (JSON arguments are parsed before the write lock),
+`JsonWriter` support for lists, `scripts/json-benchmark.sh` and `JsonBenchmark`. README: new section 4.12 and the JSON entries
+throughout.
+
+### Verified
+- 99 new tests: parser (invalid input, UTF-8, depth, number parsing against `Double.parseDouble` on 200,000 random decimals),
+  writer, both containers against `LinkedHashMap` / `ArrayList` under random operations (contents, order and byte count),
+  JSONPath (examples, limits, and **against Jayway JsonPath on more than 5,000 random paths**), the document operations
+  (RFC 7386 vectors; **more than 10,000 random operations, every failure leaving the document unchanged and the estimated
+  size equal to a recount**; set / delete / append against Jayway), snapshots (random documents and a 6 MB document cut
+  into protocol-sized commands), the 22 commands in both path dialects, and a real server (roles, `maxmemory`, AOF replay
+  and rewrite of a 3.6 MB document built by 270 appends, full sync and live stream to a replica, `MULTI`/`WATCH`, concurrent
+  clients on one document, concurrent big stores).
+- **A bug the random tests found and the examples did not:** a union such as `$.a[3,1]` selects in neither document order nor
+  its reverse, so removing the matches "from the last to the first" removed the wrong elements (and crashed). Changes now
+  follow an explicit order: deepest first, highest array index first.
+- `redis-py` 8.1 (`r.json()`): set, get by path, several paths, numincrby, nummultby, arrappend, arrinsert, arrpop, arrtrim,
+  arrindex, objkeys, strappend, toggle, merge, mget, clear, delete, debug memory, pipelines - all parse. It must be created
+  with `protocol=2`: `redis-py` 8 asks for RESP3 first and does not fall back from `-NOPROTO` (this concerns every command,
+  not only JSON; the README said otherwise and was corrected).
+- The packaged jar restarted from the append-only file, and again after `BGREWRITEAOF`, with the documents intact.
+- Measured (2-core laptop shared with a browser and an IDE): a 6,725-byte record parses at 77,000 / s and is written at
+  39,000 / s; it takes 6,258 bytes on the heap (a conventional tree of maps and boxed numbers: 12,771), the `maxmemory`
+  estimate is 115 % of that; path operations run at 11-19 million / s; parsing scales 75,000 -> 148,000 / s from 1 to 4
+  threads. Server numbers in ADR 0007.
+
+### Not verified / not done
+- Not compared with a Redis Stack / Redis 8 server (none installed): reply formats and error texts follow the documentation.
+- `JSON.MSET`, `JSON.RESP`, `JSON.NUMPOWBY`; regular-expression filters and filter functions.
+- Nothing queries across documents; embeddings inside documents are not indexed (use a vector set under the same id).
+- Integers beyond 64 bits become doubles (RedisJSON keeps unsigned up to 2^64-1); `float[]` packing of 32-bit values.
+- Copy-on-write snapshots (a document is dumped as text under its key's lock).
+
+### Suggested next steps
+1. Run the same client calls against a Redis Stack server and diff the replies.
+2. A secondary index over a few JSON paths (status, tags) so that "all records with status failed" does not need a scan.
+3. Use the path engine for `VSIM ... FILTER` on vector-set attributes.
+4. `JSON.MSET` with a two-phase check.

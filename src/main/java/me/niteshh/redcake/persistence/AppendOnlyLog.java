@@ -262,7 +262,7 @@ public class AppendOnlyLog {
                     return;
                 }
                 try {
-                    for (List<String> command : entry.toCommands()) {
+                    for (List<String> command : entry.commands()) {
                         tempOut.write(RespCommandCodec.encode(command));
                     }
                     count[0]++;

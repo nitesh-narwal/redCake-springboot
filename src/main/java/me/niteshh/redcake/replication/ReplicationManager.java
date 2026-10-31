@@ -216,7 +216,7 @@ public class ReplicationManager {
             } else {
                 int sent = 1;
                 for (SnapshotEntry entry : entries) {
-                    for (List<String> command : entry.toCommands()) {
+                    for (List<String> command : entry.commands()) {
                         replica.writeSnapshotCommand(RespCommandCodec.encode(command));
                         if (++sent % SNAPSHOT_FLUSH_INTERVAL == 0) {
                             replica.flushSnapshot();

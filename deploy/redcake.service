@@ -14,6 +14,10 @@ User=redcake
 Group=redcake
 EnvironmentFile=/etc/redcake/env
 WorkingDirectory=/var/lib/redcake
+# Vector search (VADD/VSIM) is several times faster with the JDK's Vector API: add
+#     --add-modules jdk.incubator.vector
+# after -XX:MaxRAMPercentage=75 below. Check `java --list-modules | grep vector` first - a JVM without that module
+# refuses to start with the flag. Without it RedCake uses a slower pure-Java kernel (and says so in its log).
 ExecStart=/usr/bin/java -XX:+UseZGC -XX:MaxRAMPercentage=75 -jar /opt/redcake/redcake.jar \
     --config /etc/redcake/redcake.conf
 Restart=on-failure

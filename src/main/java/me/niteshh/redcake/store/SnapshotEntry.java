@@ -1,8 +1,14 @@
 package me.niteshh.redcake.store;
 
+import me.niteshh.redcake.json.JsonDocument;
+import me.niteshh.redcake.vector.VectorSet;
+
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Set;
 
 /**
@@ -28,6 +34,21 @@ public record SnapshotEntry(
      * command exceeds the parser's argument limit.
      */
     static final int CHUNK = 256;
+
+    /**
+     * The same commands as {@link #toCommands()}, produced one at a time. A vector set is dumped into many
+     * chunks of up to half a megabyte; creating their commands lazily keeps the sender from holding a second copy
+     * of the whole index in memory while it streams them.
+     */
+    public Iterable<List<String>> commands() {
+        if (value instanceof VectorSet.Dump dump) {
+            return () -> vectorCommands(dump);
+        }
+        if (value instanceof JsonDocument.Dump dump) {
+            return () -> jsonCommands(dump);
+        }
+        return toCommands();
+    }
 
     /**
      * Commands that recreate this key, including its (absolute) expiry.
@@ -92,6 +113,18 @@ public record SnapshotEntry(
                 }
                 flush(commands, chunk);
             }
+            case VectorSet.Dump dump -> {
+                for (List<String> command : commands()) {
+                    commands.add(command);
+                }
+                return commands; // the iterator already ends with PEXPIREAT
+            }
+            case JsonDocument.Dump dump -> {
+                for (List<String> command : commands()) {
+                    commands.add(command);
+                }
+                return commands; // likewise
+            }
             default -> throw new IllegalStateException("Unsupported value: " + value.getClass());
         }
 
@@ -99,6 +132,77 @@ public record SnapshotEntry(
             commands.add(List.of("PEXPIREAT", key, Long.toString(expiresAt)));
         }
         return commands;
+    }
+
+    /**
+     * {@code VRESTORE key HEADER <bytes>}, one {@code VRESTORE key NODES <first id> <bytes>} per chunk,
+     * {@code VRESTORE key END}, then the expiry. Binary data travels as ISO-8859-1 text, like every value.
+     */
+    private Iterator<List<String>> vectorCommands(VectorSet.Dump dump) {
+        int chunks = dump.chunks().size();
+        int total = chunks + 2 + (expiresAt != null ? 1 : 0);
+        return new Iterator<>() {
+            private int index;
+
+            @Override
+            public boolean hasNext() {
+                return index < total;
+            }
+
+            @Override
+            public List<String> next() {
+                if (index >= total) {
+                    throw new NoSuchElementException();
+                }
+                int i = index++;
+                if (i == 0) {
+                    return List.of("VRESTORE", key, "HEADER", new String(dump.header(), StandardCharsets.ISO_8859_1));
+                }
+                if (i <= chunks) {
+                    VectorSet.Chunk chunk = dump.chunks().get(i - 1);
+                    return List.of("VRESTORE", key, "NODES", Integer.toString(chunk.firstId()),
+                            new String(chunk.data(), StandardCharsets.ISO_8859_1));
+                }
+                if (i == chunks + 1) {
+                    return List.of("VRESTORE", key, "END");
+                }
+                return List.of("PEXPIREAT", key, Long.toString(expiresAt));
+            }
+        };
+    }
+
+    /**
+     * The steps of a JSON document ({@code JSON.SET key $ ...}, then {@code JSON.ARRAPPEND} / {@code JSON.SET} pieces
+     * when it is too large for one command), each with the key put after the command name, then the expiry.
+     */
+    private Iterator<List<String>> jsonCommands(JsonDocument.Dump dump) {
+        List<List<String>> steps = dump.steps();
+        int total = steps.size() + (expiresAt != null ? 1 : 0);
+        return new Iterator<>() {
+            private int index;
+
+            @Override
+            public boolean hasNext() {
+                return index < total;
+            }
+
+            @Override
+            public List<String> next() {
+                if (index >= total) {
+                    throw new NoSuchElementException();
+                }
+                int i = index++;
+                if (i == steps.size()) {
+                    return List.of("PEXPIREAT", key, Long.toString(expiresAt));
+                }
+                List<String> step = steps.get(i);
+                List<String> command = new ArrayList<>(step.size() + 1);
+                command.add(step.get(0));
+                command.add(key);
+                command.addAll(step.subList(1, step.size()));
+                return command;
+            }
+        };
     }
 
     private List<String> start(String command) {

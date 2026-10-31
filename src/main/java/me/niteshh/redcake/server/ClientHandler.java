@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import me.niteshh.redcake.cluster.ClusterState;
 import me.niteshh.redcake.command.CommandHandler;
 import me.niteshh.redcake.command.CommandSupport;
+import me.niteshh.redcake.command.PreparedWork;
 import me.niteshh.redcake.command.RedCakeCommand;
 import me.niteshh.redcake.config.MemoryConfig;
 import me.niteshh.redcake.config.RedCakeAuthConfig;
@@ -51,7 +52,8 @@ import java.util.Set;
  *   <li>Everything else goes through {@link #execute}: <b>reads</b> run lock-free and in
  *       parallel; <b>writes</b> on a primary run inside the global write lock:
  *       check the fence -&gt; make room (maxmemory) -&gt; normalize -&gt; execute -&gt; AOF -&gt; queue for
- *       replicas. Writes on a replica are rejected with {@code -READONLY}; in cluster mode a primary that
+ *       replicas. (A command may do its read-only share of the work before the lock, see
+ *       {@code RedCakeCommand#prepare}.) Writes on a replica are rejected with {@code -READONLY}; in cluster mode a primary that
  *       cannot prove its leadership (see {@link ClusterState#mayWrite()}) refuses them with
  *       {@code -CLUSTERDOWN}.</li>
  * </ol>
@@ -856,7 +858,7 @@ public class ClientHandler {
                         "MISCONF the append-only file cannot be written; writes are disabled"
                 );
             }
-            return executeWrite(command, known.growsMemory());
+            return executeWrite(known, command);
         } catch (RuntimeException e) {
             log.error("Command {} failed unexpectedly", command.getFirst(), e);
             return new ErrorValue("internal error while executing command");
@@ -868,7 +870,11 @@ public class ClientHandler {
      * unlock is in-memory only (store update, AOF buffer write, replica
      * queueing); no waiting on replica sockets happens here.
      */
-    private RespValue executeWrite(List<String> command, boolean growsMemory) {
+    private RespValue executeWrite(RedCakeCommand known, List<String> command) {
+        boolean growsMemory = known.growsMemory();
+        // Read-only share of the work (e.g. a vector insert's neighbour search) happens before the lock, on this
+        // connection's own thread, so concurrent connections do it in parallel instead of queueing for the lock.
+        Object prepared = prepare(known, command);
         replicationManager.lockPrimaryWrites();
         try {
             // The fence is checked inside the lock, per write: a primary that cannot prove it is still the
@@ -891,6 +897,9 @@ public class ClientHandler {
 
             // One clock reading -> identical absolute deadlines everywhere.
             List<String> normalized = commandHandler.normalize(command, System.currentTimeMillis());
+            if (prepared != null) { // only commands that prepare anything pay for the hand-over
+                PreparedWork.set(prepared);
+            }
             RespValue response = commandHandler.handle(normalized);
 
             if (!(response instanceof ErrorValue)) {
@@ -901,7 +910,19 @@ public class ClientHandler {
             }
             return response;
         } finally {
+            if (prepared != null) {
+                PreparedWork.clear();
+            }
             replicationManager.unlockPrimaryWrites();
+        }
+    }
+
+    private Object prepare(RedCakeCommand known, List<String> command) {
+        try {
+            return known.prepare(command);
+        } catch (RuntimeException e) {
+            log.debug("Preparing {} failed; it will run without: {}", command.getFirst(), e.toString());
+            return null;
         }
     }
 

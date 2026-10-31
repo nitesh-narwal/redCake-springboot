@@ -22,11 +22,14 @@ public final class LambdaCommand implements RedCakeCommand {
     private final boolean growsMemory;
     private final boolean admin;
     private final Function<List<String>, RespValue> body;
+    /** Work done before the write lock is taken (see {@link RedCakeCommand#prepare}); {@code null}: none. */
+    private final Function<List<String>, Object> preparer;
 
     private LambdaCommand(
             String name, int minArgs, int maxArgs,
             boolean write, boolean growsMemory, boolean admin,
-            Function<List<String>, RespValue> body
+            Function<List<String>, RespValue> body,
+            Function<List<String>, Object> preparer
     ) {
         this.name = name;
         this.minArgs = minArgs;
@@ -35,26 +38,41 @@ public final class LambdaCommand implements RedCakeCommand {
         this.growsMemory = growsMemory;
         this.admin = admin;
         this.body = body;
+        this.preparer = preparer;
     }
 
     /** A read-only command taking between {@code min} and {@code max} arguments ({@code max < 0}: unlimited). */
     public static LambdaCommand read(String name, int min, int max, Function<List<String>, RespValue> body) {
-        return new LambdaCommand(name, min, max, false, false, false, body);
+        return new LambdaCommand(name, min, max, false, false, false, body, null);
     }
 
     /** A write command that can grow memory (rejected with OOM when the limit is hit). */
     public static LambdaCommand write(String name, int min, int max, Function<List<String>, RespValue> body) {
-        return new LambdaCommand(name, min, max, true, true, false, body);
+        return new LambdaCommand(name, min, max, true, true, false, body, null);
     }
 
     /** A write command that only removes data (still allowed when memory is full). */
     public static LambdaCommand shrink(String name, int min, int max, Function<List<String>, RespValue> body) {
-        return new LambdaCommand(name, min, max, true, false, false, body);
+        return new LambdaCommand(name, min, max, true, false, false, body, null);
     }
 
     /** A read-only administrative command (needs the admin role). */
     public static LambdaCommand admin(String name, int min, int max, Function<List<String>, RespValue> body) {
-        return new LambdaCommand(name, min, max, false, false, true, body);
+        return new LambdaCommand(name, min, max, false, false, true, body, null);
+    }
+
+    /**
+     * The same command with read-only work to do before the write lock: {@code preparer} receives the whole command
+     * (name included) on the client's own thread, must not change data and must not throw; what it returns reaches
+     * the body through {@link PreparedWork}. Parsing a large JSON argument is the typical use.
+     */
+    public LambdaCommand preparedBy(Function<List<String>, Object> preparer) {
+        return new LambdaCommand(name, minArgs, maxArgs, write, growsMemory, admin, body, preparer);
+    }
+
+    @Override
+    public Object prepare(List<String> command) {
+        return preparer == null ? null : preparer.apply(command);
     }
 
     @Override

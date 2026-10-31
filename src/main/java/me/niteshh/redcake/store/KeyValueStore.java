@@ -84,6 +84,20 @@ public interface KeyValueStore {
      */
     <T> T mutate(String key, ValueType type, Supplier<Object> factory, Function<Object, T> mutator);
 
+    /**
+     * Hands out the live value object of a key <em>without</em> holding the key's lock afterwards, for value types
+     * that synchronize themselves (only {@link ValueType#VECTORSET}). {@link #read} runs its callback inside the
+     * key's lock, which would make every similarity search on one index wait for the previous one; with this the
+     * search runs in the caller, in parallel with others, and only waits on the index's own read/write lock.
+     * The object stays valid (but possibly detached) if the key is deleted or replaced meanwhile.
+     *
+     * @return the value, or {@code null} if the key is absent or expired
+     * @throws WrongTypeException if the key holds another type
+     */
+    default Object peek(String key, ValueType type) {
+        return read(key, type, value -> value);
+    }
+
     /** @return the type of a live key, or {@code null} */
     ValueType type(String key);
 

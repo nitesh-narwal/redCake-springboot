@@ -52,6 +52,22 @@ public interface RedCakeCommand {
     }
 
     /**
+     * Optional read-only work for a write command, done <em>before</em> the primary write lock is taken, on the
+     * client's own thread - so on a multi-core machine the connections do it in parallel and the lock is held only
+     * for what really has to be serialized. What it returns is handed to {@link #execute} (same thread, same
+     * command) through {@link PreparedWork}. The world may change before the lock is acquired, so {@code execute}
+     * must treat it as a hint and re-check; a command that does not override this loses nothing.
+     *
+     * <p>Must not modify any data, and must never throw (return {@code null} instead).
+     *
+     * @param command full command including its name, as received from the client
+     * @return the prepared work, or {@code null} if there is none
+     */
+    default Object prepare(List<String> command) {
+        return null;
+    }
+
+    /**
      * Rewrites the command into a deterministic form <em>before</em> it is
      * executed, logged and replicated. Relative times ({@code EX 10},
      * {@code EXPIRE k 10}) become absolute ({@code PXAT <ms>}) using one single

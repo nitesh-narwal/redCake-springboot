@@ -17,6 +17,8 @@
         <java.version>21</java.version>
         <curator.version>5.9.0</curator.version>
         <zookeeper.version>3.9.6</zookeeper.version>
+        <!-- JaCoCo (coverage profile) prepends its agent to this; empty otherwise -->
+        <argLine></argLine>
     </properties>
     <dependencies>
         <dependency>
@@ -76,6 +78,15 @@
                 <configuration>
                     <source>21</source>
                     <target>21</target>
+                    <compilerArgs>
+                        <!--
+                            SimdKernel (vector search) uses the incubating Vector API. The class is only loaded when the
+                            JVM is started with the option "add-modules jdk.incubator.vector"; otherwise the portable
+                            kernel is used.
+                        -->
+                        <arg>--add-modules</arg>
+                        <arg>jdk.incubator.vector</arg>
+                    </compilerArgs>
                     <annotationProcessorPaths>
                         <path>
                             <groupId>org.projectlombok</groupId>
@@ -83,6 +94,14 @@
                             <version>${lombok.version}</version>
                         </path>
                     </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- so the tests can exercise the SIMD distance kernel as well as the portable one -->
+                    <argLine>@{argLine} --add-modules jdk.incubator.vector</argLine>
                 </configuration>
             </plugin>
         </plugins>

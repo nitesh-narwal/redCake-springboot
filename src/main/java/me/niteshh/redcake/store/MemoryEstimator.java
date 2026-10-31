@@ -1,5 +1,8 @@
 package me.niteshh.redcake.store;
 
+import me.niteshh.redcake.json.JsonDocument;
+import me.niteshh.redcake.vector.VectorSet;
+
 import java.util.Collection;
 import java.util.Map;
 
@@ -32,6 +35,8 @@ public final class MemoryEstimator {
             case String string -> STRING_OVERHEAD + string.length();
             case Map<?, ?> map -> 64 + map.size() * HASH_FIELD;
             case ZSet zset -> 64 + zset.size() * ZSET_MEMBER;
+            case VectorSet vectors -> 64 + vectors.estimatedBytes(); // maintained incrementally: O(1)
+            case JsonDocument json -> json.estimatedBytes(); // likewise
             case Collection<?> collection -> 48 + collection.size()
                     * (value instanceof java.util.Set ? SET_MEMBER : LIST_ELEMENT);
             default -> 0;
@@ -43,6 +48,10 @@ public final class MemoryEstimator {
         return switch (value) {
             case Map<?, ?> map -> map.isEmpty();
             case ZSet zset -> zset.size() == 0;
+            // a set that is still being loaded from a dump is empty but must not be dropped
+            case VectorSet vectors -> vectors.size() == 0 && !vectors.isRestoring();
+            // an empty object or array is a perfectly good document; only a deleted or not yet written one goes
+            case JsonDocument json -> json.isDeleted() || json.isUnset();
             case Collection<?> collection -> collection.isEmpty();
             default -> false;
         };

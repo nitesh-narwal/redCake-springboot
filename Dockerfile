@@ -28,5 +28,7 @@ HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 CMD \
 #   docker run -e REDCAKE_API_KEY=... redcake
 # (or add --allow-insecure when the network is trusted).
 ENV JAVA_OPTS="-XX:+UseZGC -XX:+ZGenerational -XX:MaxRAMPercentage=75"
-ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /opt/redcake/redcake.jar --bind 0.0.0.0 \"$@\"", "--"]
+# Vector search runs several times faster on the JDK's Vector API (an incubating module). Enable it when this JVM
+# has it; a JRE without the module would refuse to start if it were asked for unconditionally.
+ENTRYPOINT ["sh", "-c", "java --list-modules | grep -q '^jdk.incubator.vector' && SIMD='--add-modules jdk.incubator.vector'; exec java $JAVA_OPTS $SIMD -jar /opt/redcake/redcake.jar --bind 0.0.0.0 \"$@\"", "--"]
 CMD ["--aof-file", "/data/redcake.aof", "--metrics-port", "9100"]
