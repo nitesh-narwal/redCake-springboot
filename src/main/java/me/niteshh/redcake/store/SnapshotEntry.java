@@ -1,6 +1,7 @@
 package me.niteshh.redcake.store;
 
 import me.niteshh.redcake.json.JsonDocument;
+import me.niteshh.redcake.stream.Stream;
 import me.niteshh.redcake.vector.VectorSet;
 
 import java.nio.charset.StandardCharsets;
@@ -46,6 +47,9 @@ public record SnapshotEntry(
         }
         if (value instanceof JsonDocument.Dump dump) {
             return () -> jsonCommands(dump);
+        }
+        if (value instanceof Stream stream) {
+            return () -> streamCommands(stream);
         }
         return toCommands();
     }
@@ -120,6 +124,12 @@ public record SnapshotEntry(
                 return commands; // the iterator already ends with PEXPIREAT
             }
             case JsonDocument.Dump dump -> {
+                for (List<String> command : commands()) {
+                    commands.add(command);
+                }
+                return commands; // likewise
+            }
+            case Stream stream -> {
                 for (List<String> command : commands()) {
                     commands.add(command);
                 }
@@ -201,6 +211,35 @@ public record SnapshotEntry(
                 command.add(key);
                 command.addAll(step.subList(1, step.size()));
                 return command;
+            }
+        };
+    }
+
+    /**
+     * The commands that rebuild a stream ({@link Stream#snapshotCommands}: {@code XADD} per entry, {@code XSETID},
+     * the groups with their consumers and pending entries), then the expiry. Created one at a time: a stream can hold
+     * millions of entries and the sender should not hold them as commands as well.
+     */
+    private Iterator<List<String>> streamCommands(Stream stream) {
+        Iterator<List<String>> rebuild = stream.snapshotCommands(key);
+        return new Iterator<>() {
+            private boolean expiryDone = expiresAt == null;
+
+            @Override
+            public boolean hasNext() {
+                return rebuild.hasNext() || !expiryDone;
+            }
+
+            @Override
+            public List<String> next() {
+                if (rebuild.hasNext()) {
+                    return rebuild.next();
+                }
+                if (expiryDone) {
+                    throw new NoSuchElementException();
+                }
+                expiryDone = true;
+                return List.of("PEXPIREAT", key, Long.toString(expiresAt));
             }
         };
     }

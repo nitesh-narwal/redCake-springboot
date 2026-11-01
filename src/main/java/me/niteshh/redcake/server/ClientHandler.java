@@ -2,9 +2,11 @@ package me.niteshh.redcake.server;
 
 import lombok.extern.slf4j.Slf4j;
 import me.niteshh.redcake.cluster.ClusterState;
+import me.niteshh.redcake.command.BlockingRequest;
 import me.niteshh.redcake.command.CommandHandler;
 import me.niteshh.redcake.command.CommandSupport;
 import me.niteshh.redcake.command.PreparedWork;
+import me.niteshh.redcake.command.Propagation;
 import me.niteshh.redcake.command.RedCakeCommand;
 import me.niteshh.redcake.config.MemoryConfig;
 import me.niteshh.redcake.config.RedCakeAuthConfig;
@@ -17,6 +19,7 @@ import me.niteshh.redcake.security.Role;
 import me.niteshh.redcake.stats.CommandStats;
 import me.niteshh.redcake.stats.ServerStats;
 import me.niteshh.redcake.stats.SlowLog;
+import me.niteshh.redcake.store.KeyWaiters;
 import me.niteshh.redcake.store.MemoryManager;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -57,6 +60,11 @@ import java.util.Set;
  *       cannot prove its leadership (see {@link ClusterState#mayWrite()}) refuses them with
  *       {@code -CLUSTERDOWN}.</li>
  * </ol>
+ *
+ * <h3>Blocking reads</h3>
+ * A command that can wait ({@code XREAD ... BLOCK}, see {@link BlockingRequest}) is tried; if it has nothing to return
+ * yet the connection's virtual thread parks in {@link KeyWaiters} - holding no lock, in particular not the write
+ * lock - and tries again when a key it waits on is touched. Inside {@code MULTI} such a command never waits.
  *
  * <h3>Performance: pipelining</h3>
  * Replies are buffered and flushed only when no further request bytes are
@@ -196,6 +204,7 @@ public class ClientHandler {
 
             String address = remoteAddress(clientSocket);
             session = new Session(clientRegistry.nextId(), clientSocket, output, address, ipOf(address));
+            session.input = input;
             session.authenticated = !authRequired();
             clientRegistry.register(session);
 
@@ -350,11 +359,12 @@ public class ClientHandler {
         if (s.inMulti) {
             return queue(s, command, known);
         }
-        return dispatch(s, command, name);
+        return dispatch(s, command, name, known);
     }
 
     /** Connection-level commands, then ordinary command execution. */
-    private RespValue dispatch(Session s, List<String> command, String name) throws IOException {
+    private RespValue dispatch(Session s, List<String> command, String name, RedCakeCommand known)
+            throws IOException {
         return switch (name) {
             case "PSYNC" -> psync(s, command);
             case "REPLCONF" -> replconf(s, command);
@@ -370,7 +380,10 @@ public class ClientHandler {
             case "CLIENT" -> client(s, command);
             case "ACL" -> acl(s, command);
             case "MONITOR" -> monitor(s);
-            default -> timedExecute(s, command, name);
+            default -> {
+                BlockingRequest waitFor = known == null ? null : known.blocking(command);
+                yield waitFor == null ? timedExecute(s, command, name) : blockingExecute(s, command, name, waitFor);
+            }
         };
     }
 
@@ -830,6 +843,91 @@ public class ClientHandler {
         return response;
     }
 
+    /** How often a waiting connection looks whether its client is still there. */
+    private static final long WAIT_TICK_NANOS = 200_000_000L;
+
+    /**
+     * Runs a command that may wait (see {@link BlockingRequest}). It is executed as usual - reads in parallel,
+     * writes through the write lock - and when it returns a null array, "nothing yet", this connection waits <em>outside
+     * any lock</em> until a key it waits on changes, the time is up, or the client is gone. After a wake-up the
+     * command only runs again if {@link BlockingRequest#worthTrying} says it could find something, so a busy stream
+     * with many idle readers does not send every one of them through the write lock for each entry.
+     *
+     * <p>Statistics, slow log and MONITOR see the command once, with the time it spent executing (not waiting).
+     */
+    private RespValue blockingExecute(Session s, List<String> original, String name, BlockingRequest request) {
+        long deadline = Long.MAX_VALUE;
+        if (request.timeoutMillis() > 0 && request.timeoutMillis() < Long.MAX_VALUE / 2_000_000L) {
+            deadline = System.nanoTime() + request.timeoutMillis() * 1_000_000L;
+        }
+        RespValue response = null;
+        long micros = 0;
+        boolean first = true;
+        s.pipelinedWhileBlocked = false;
+        try (KeyWaiters.Registration waiting = replicationManager.getStore().waiters().register(request.keys())) {
+            while (true) {
+                // The versions are noted before looking, so that a change after this point cannot be missed.
+                long[] seen = waiting.versions();
+                if (first || request.worthTrying().getAsBoolean()) {
+                    first = false;
+                    long start = System.nanoTime();
+                    response = execute(request.command());
+                    micros += (System.nanoTime() - start) / 1_000;
+                    if (!(response instanceof NullArray)) {
+                        break;
+                    }
+                }
+                if (!waiting.await(seen, deadline, WAIT_TICK_NANOS, () -> clientIsThere(s))) {
+                    break;
+                }
+            }
+        }
+        commandStats.record(name, micros, response instanceof ErrorValue);
+        slowLog.record(original, micros, s.address, s.name);
+        if (clientRegistry.hasMonitors()) {
+            clientRegistry.feedMonitors(s, original);
+        }
+        return response;
+    }
+
+    /**
+     * Whether the client of a connection that waits is still connected. Nothing reads the socket while a command
+     * waits, so a hang-up would go unnoticed - and an {@code XREADGROUP} would later hand entries to a client that is no
+     * longer there. A one-millisecond read tells: end of stream means gone, a timeout means quiet, and a byte
+     * means the client already sent its next command (it is put back, and the connection is not looked at again).
+     */
+    private static boolean clientIsThere(Session s) {
+        if (s.socket.isClosed()) {
+            return false;
+        }
+        if (s.pipelinedWhileBlocked || s.input == null) {
+            return true;
+        }
+        try {
+            if (s.input.available() > 0) {
+                s.pipelinedWhileBlocked = true;
+                return true;
+            }
+            int before = s.socket.getSoTimeout();
+            s.socket.setSoTimeout(1);
+            try {
+                s.input.mark(1);
+                if (s.input.read() < 0) {
+                    return false;
+                }
+                s.input.reset();
+                s.pipelinedWhileBlocked = true;
+                return true;
+            } catch (SocketTimeoutException quiet) {
+                return true;
+            } finally {
+                s.socket.setSoTimeout(before);
+            }
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
     /**
      * Why a replica refuses a write. In cluster mode the reason depends on the situation: a follower says who
      * the primary is ({@code -READONLY}), a node that has no primary right now says so ({@code -CLUSTERDOWN})
@@ -900,13 +998,22 @@ public class ClientHandler {
             if (prepared != null) { // only commands that prepare anything pay for the hand-over
                 PreparedWork.set(prepared);
             }
-            RespValue response = commandHandler.handle(normalized);
+            RespValue response;
+            List<List<String>> effects;
+            Propagation.begin();
+            try {
+                response = commandHandler.handle(normalized);
+            } finally {
+                effects = Propagation.end();
+            }
 
-            if (!(response instanceof ErrorValue)) {
-                IOException failure = propagate(normalized);
-                if (failure != null) {
-                    response = new ErrorValue("MISCONF failed to persist command: " + failure.getMessage());
-                }
+            // A command that is not repeatable (XREADGROUP, XAUTOCLAIM) says what it did, and that is what replicas
+            // and the AOF get - even when it ends in an error after it has changed something.
+            IOException failure = effects != null
+                    ? propagateAll(effects)
+                    : (response instanceof ErrorValue ? null : propagate(normalized));
+            if (failure != null && !(response instanceof ErrorValue)) {
+                response = new ErrorValue("MISCONF failed to persist command: " + failure.getMessage());
             }
             return response;
         } finally {
@@ -915,6 +1022,18 @@ public class ClientHandler {
             }
             replicationManager.unlockPrimaryWrites();
         }
+    }
+
+    /** {@link #propagate} for each command of a list; the first failure is reported, but all are replicated. */
+    private IOException propagateAll(List<List<String>> commands) {
+        IOException failure = null;
+        for (List<String> command : commands) {
+            IOException failed = propagate(command);
+            if (failure == null) {
+                failure = failed;
+            }
+        }
+        return failure;
     }
 
     private Object prepare(RedCakeCommand known, List<String> command) {

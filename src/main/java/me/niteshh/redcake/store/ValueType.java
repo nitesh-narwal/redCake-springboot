@@ -1,6 +1,7 @@
 package me.niteshh.redcake.store;
 
 import me.niteshh.redcake.json.JsonDocument;
+import me.niteshh.redcake.stream.Stream;
 import me.niteshh.redcake.vector.VectorSet;
 
 import java.util.List;
@@ -21,6 +22,8 @@ import java.util.Set;
  *       itself, see {@link KeyValueStore#peek})</li>
  *   <li>{@code JSON} - {@link JsonDocument} (one JSON document, changed and read by path; {@code TYPE} says
  *       {@code ReJSON-RL}, the name RedisJSON uses, so clients that look at it are not surprised)</li>
+ *   <li>{@code STREAM} - {@link Stream} (an append-only log of entries with consumer groups; an empty stream is a
+ *       perfectly good key, unlike an empty list)</li>
  * </ul>
  */
 public enum ValueType {
@@ -30,7 +33,8 @@ public enum ValueType {
     SET("set"),
     ZSET("zset"),
     VECTORSET("vectorset"),
-    JSON("ReJSON-RL");
+    JSON("ReJSON-RL"),
+    STREAM("stream");
 
     private final String redisName;
 
@@ -53,6 +57,7 @@ public enum ValueType {
             case ZSet ignored -> ZSET;
             case VectorSet ignored -> VECTORSET;
             case JsonDocument ignored -> JSON;
+            case Stream ignored -> STREAM;
             default -> throw new IllegalArgumentException(
                     "Unsupported value class: " + value.getClass());
         };

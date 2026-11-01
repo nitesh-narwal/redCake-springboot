@@ -3,6 +3,7 @@ package me.niteshh.redcake.store;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import me.niteshh.redcake.json.JsonDocument;
+import me.niteshh.redcake.stream.Stream;
 import me.niteshh.redcake.vector.VectorSet;
 import org.springframework.stereotype.Component;
 
@@ -53,6 +54,9 @@ public class InMemoryKeyValueStore implements KeyValueStore {
     /** Sum of {@link ValueEntry#bytes()} over all entries. */
     private final AtomicLong memory = new AtomicLong();
 
+    /** The connections blocked on a key (stream reads with BLOCK). */
+    private final KeyWaiters waiters = new KeyWaiters();
+
     private final ExpirationManager expirationManager;
 
     private volatile ExpiryListener expiryListener;
@@ -66,6 +70,11 @@ public class InMemoryKeyValueStore implements KeyValueStore {
     @Override
     public void setExpiryListener(ExpiryListener listener) {
         this.expiryListener = listener;
+    }
+
+    @Override
+    public KeyWaiters waiters() {
+        return waiters;
     }
 
     // ------------------------------------------------ entry bookkeeping
@@ -84,6 +93,9 @@ public class InMemoryKeyValueStore implements KeyValueStore {
         } else if (old != null && old.expiresAt() != null) {
             expirationManager.cancel(key);
         }
+        if (old != null && waiters.waiting() > 0 && old.type() != entry.type()) {
+            waiters.wake(key); // a blocked reader of the old value must look again (and find the wrong type)
+        }
         return entry;
     }
 
@@ -93,6 +105,7 @@ public class InMemoryKeyValueStore implements KeyValueStore {
         if (old.expiresAt() != null) {
             expirationManager.cancel(key);
         }
+        waiters.wake(key); // a reader blocked on this key must find out that it is gone
         return null;
     }
 
@@ -507,6 +520,7 @@ public class InMemoryKeyValueStore implements KeyValueStore {
 
         ValueEntry moved = taken[0];
         data.compute(destination, (k, old) -> install(k, old, moved.value(), moved.expiresAt()));
+        waiters.wake(destination); // what was renamed to it may be what a blocked reader waits for
         return true;
     }
 
@@ -541,6 +555,7 @@ public class InMemoryKeyValueStore implements KeyValueStore {
         data.clear();
         memory.set(0);
         expirationManager.clear();
+        waiters.wakeAll();
     }
 
     @Override
@@ -599,6 +614,8 @@ public class InMemoryKeyValueStore implements KeyValueStore {
             case VectorSet vectors -> vectors.isRestoring() ? null : vectors.dump();
             // the commands that rebuild it, as text: stable once the key's lock is released
             case JsonDocument json -> json.isUnset() ? null : json.dump();
+            // entries shared (they never change), groups copied: turned into commands after the lock is released
+            case Stream stream -> stream.copy();
             default -> value;
         };
     }

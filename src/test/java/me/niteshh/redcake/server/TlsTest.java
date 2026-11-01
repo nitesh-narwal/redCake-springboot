@@ -96,6 +96,32 @@ class TlsTest {
     }
 
     @Test
+    void aReadThatWaitsOverTlsSurvivesTheServersLookingForAHangUp() throws Exception {
+        Path store = newKeystore("server.p12");
+        TlsConfig config = tls(store, store, false, false);
+        server = new TestServer().withTls(config).start();
+        SSLContext context = TlsSupport.createContext(config);
+
+        try (RespClient waiting = tlsClient(context); RespClient writer = tlsClient(context)) {
+            waiting.setTimeout(15_000);
+            waiting.send("XREAD", "BLOCK", "10000", "STREAMS", "jobs", "$");
+            assertTrue(TestSupport.await(5_000, () -> server.stack.store().waiters().waiting() == 1));
+            Thread.sleep(900); // several rounds of the server asking the socket whether the client is still there
+            assertEquals(1, server.stack.store().waiters().waiting(), "still waiting");
+            assertEquals("\"1-1\"", writer.call("XADD", "jobs", "1-1", "task", "a"));
+            assertEquals("[[\"jobs\", [[\"1-1\", [\"task\", \"a\"]]]]]", waiting.read());
+            assertEquals("+PONG", waiting.call("PING"), "the connection is intact afterwards");
+        }
+
+        RespClient leaving = tlsClient(context);
+        leaving.send("XREAD", "BLOCK", "0", "STREAMS", "jobs", "$");
+        assertTrue(TestSupport.await(5_000, () -> server.stack.store().waiters().waiting() == 1));
+        leaving.close();
+        assertTrue(TestSupport.await(5_000, () -> server.stack.store().waiters().waiting() == 0),
+                "the hang-up is noticed on an encrypted connection too");
+    }
+
+    @Test
     void aClientThatDoesNotTrustTheCertificateFailsTheHandshake() throws Exception {
         Path serverStore = newKeystore("server.p12");
         Path otherStore = newKeystore("other.p12"); // a different self-signed identity

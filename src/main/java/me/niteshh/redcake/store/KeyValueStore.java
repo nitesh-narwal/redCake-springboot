@@ -184,4 +184,10 @@ public interface KeyValueStore {
 
     /** Registers the callback invoked after a key expires (may be {@code null}). */
     void setExpiryListener(ExpiryListener listener);
+
+    /**
+     * The connections blocked on keys of this store ({@code XREAD BLOCK}). The store wakes them when a key they wait
+     * on is removed, replaced by another type or renamed over; a command that adds to a key wakes them itself.
+     */
+    KeyWaiters waiters();
 }

@@ -5,6 +5,7 @@ import me.niteshh.redcake.replication.primary.ReplicaConnection;
 import me.niteshh.redcake.resp.RespValue;
 import me.niteshh.redcake.security.Role;
 
+import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.net.Socket;
 import java.util.ArrayList;
@@ -44,6 +45,11 @@ final class Session implements Subscriber {
 
     // ---- control flow
     boolean closeRequested;
+
+    // ---- blocking reads (XREAD BLOCK): the connection's input, to notice a client that hangs up while it waits
+    BufferedInputStream input;
+    /** The client sent more commands while a blocking command waited, so peeking at the socket tells nothing. */
+    boolean pipelinedWhileBlocked;
 
     // ---- replication link (set once this connection became a replica's stream)
     int replicaPort;

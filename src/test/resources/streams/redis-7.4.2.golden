@@ -1,0 +1,941 @@
+## xadd-errors
+> xadd
+-ERR wrong number of arguments for 'xadd' command
+> xadd k
+-ERR wrong number of arguments for 'xadd' command
+> xadd k * a
+-ERR wrong number of arguments for 'xadd' command
+> xadd k 0-0 a 1
+-ERR The ID specified in XADD must be greater than 0-0
+> xadd k abc a 1
+-ERR Invalid stream ID specified as stream command argument
+> xadd k 1-1 a 1
+"1-1"
+> xadd k 1-1 a 1
+-ERR The ID specified in XADD is equal or smaller than the target stream top item
+> xadd k 1-0 a 1
+-ERR The ID specified in XADD is equal or smaller than the target stream top item
+> xadd k 1-* a 1
+"1-2"
+> xadd k 1-* a 1
+"1-3"
+> xadd k 0-* a 1
+-ERR The ID specified in XADD is equal or smaller than the target stream top item
+> xadd k maxlen abc 5-0 a 1
+-ERR value is not an integer or out of range
+> xadd k maxlen -1 5-0 a 1
+-ERR The MAXLEN argument must be >= 0.
+> xadd k maxlen 5 minid 1 5-0 a 1
+-ERR syntax error, MAXLEN and MINID options at the same time are not compatible
+> xadd k limit 5 5-0 a 1
+-ERR syntax error, LIMIT cannot be used without specifying a trimming strategy
+> xadd k maxlen = 5 limit 3 7-0 a 1
+-ERR syntax error, LIMIT cannot be used without the special ~ option
+> xadd nokey nomkstream 1-1 a 1
+(nil)
+> xadd k foo 8-0 a 1
+-ERR Invalid stream ID specified as stream command argument
+> xadd k 9-0 a
+-ERR wrong number of arguments for 'xadd' command
+> xadd k 9-0 a 1 b
+-ERR wrong number of arguments for 'xadd' command
+> xadd k 18446744073709551615-18446744073709551615 a 1
+"18446744073709551615-18446744073709551615"
+> xadd k 18446744073709551615-18446744073709551615 a 1
+-ERR The stream has exhausted the last possible ID, unable to add more items
+> xadd k * a 1
+-ERR The stream has exhausted the last possible ID, unable to add more items
+> xlen k
+:4
+> xlen nokey
+:0
+> xlen
+-ERR wrong number of arguments for 'xlen' command
+> set str v
++OK
+> xlen str
+-WRONGTYPE Operation against a key holding the wrong kind of value
+> xadd str 1-1 a 1
+-WRONGTYPE Operation against a key holding the wrong kind of value
+> xrange str - +
+-WRONGTYPE Operation against a key holding the wrong kind of value
+## xadd-ids
+> xadd k 5-5 a 1
+"5-5"
+> xadd k 5-* a 2
+"5-6"
+> xadd k 5-* a 3
+"5-7"
+> xadd k 6-* a 4
+"6-0"
+> xadd k 6 a 5
+-ERR The ID specified in XADD is equal or smaller than the target stream top item
+> xadd k 7 a 6
+"7-0"
+> xadd k 007-8 a 7
+"7-8"
+> xrange k - +
+[["5-5", ["a", "1"]], ["5-6", ["a", "2"]], ["5-7", ["a", "3"]], ["6-0", ["a", "4"]], ["7-0", ["a", "6"]], ["7-8", ["a", "7"]]]
+> xrange k 5 6
+[["5-5", ["a", "1"]], ["5-6", ["a", "2"]], ["5-7", ["a", "3"]], ["6-0", ["a", "4"]]]
+> xrange k 5-6 6-1
+[["5-6", ["a", "2"]], ["5-7", ["a", "3"]], ["6-0", ["a", "4"]]]
+> xrange k (5-6 6-1
+[["5-7", ["a", "3"]], ["6-0", ["a", "4"]]]
+> xrange k (5-6 (6-1
+[["5-7", ["a", "3"]], ["6-0", ["a", "4"]]]
+> xrange k - + count 2
+[["5-5", ["a", "1"]], ["5-6", ["a", "2"]]]
+> xrange k - + count 0
+(nil)
+> xrange k - + count -3
+(nil)
+> xrange k - + count 100
+[["5-5", ["a", "1"]], ["5-6", ["a", "2"]], ["5-7", ["a", "3"]], ["6-0", ["a", "4"]], ["7-0", ["a", "6"]], ["7-8", ["a", "7"]]]
+> xrevrange k + - count 2
+[["7-8", ["a", "7"]], ["7-0", ["a", "6"]]]
+> xrevrange k + -
+[["7-8", ["a", "7"]], ["7-0", ["a", "6"]], ["6-0", ["a", "4"]], ["5-7", ["a", "3"]], ["5-6", ["a", "2"]], ["5-5", ["a", "1"]]]
+> xrevrange k 6 5
+[["6-0", ["a", "4"]], ["5-7", ["a", "3"]], ["5-6", ["a", "2"]], ["5-5", ["a", "1"]]]
+> xrevrange k (6-1 (5-5
+[["6-0", ["a", "4"]], ["5-7", ["a", "3"]], ["5-6", ["a", "2"]]]
+> xrange k + -
+[]
+> xrange nokey - +
+[]
+> xrange nokey - + count 0
+[]
+> xrange k ( +
+-ERR Invalid stream ID specified as stream command argument
+> xrange k (18446744073709551615-18446744073709551615 +
+-ERR invalid start ID for the interval
+> xrange k - (0-0
+-ERR invalid end ID for the interval
+> xrange k a b
+-ERR Invalid stream ID specified as stream command argument
+> xrange k - + foo
+-ERR syntax error
+> xrange k - + count
+-ERR syntax error
+> xrange k - + count x
+-ERR value is not an integer or out of range
+> xlen k
+:6
+## trim
+> xadd t 1-1 a 1
+"1-1"
+> xadd t 2-1 a 2
+"2-1"
+> xadd t 3-1 a 3
+"3-1"
+> xadd t 4-1 a 4
+"4-1"
+> xadd t 5-1 a 5
+"5-1"
+> xadd t 6-1 a 6
+"6-1"
+> xtrim t maxlen 4
+:2
+> xrange t - +
+[["3-1", ["a", "3"]], ["4-1", ["a", "4"]], ["5-1", ["a", "5"]], ["6-1", ["a", "6"]]]
+> xtrim t maxlen = 4
+:0
+> xtrim t maxlen 0 limit 2
+-ERR syntax error, LIMIT cannot be used without the special ~ option
+> xrange t - +
+[["3-1", ["a", "3"]], ["4-1", ["a", "4"]], ["5-1", ["a", "5"]], ["6-1", ["a", "6"]]]
+> xtrim t minid 5-0
+:2
+> xrange t - +
+[["5-1", ["a", "5"]], ["6-1", ["a", "6"]]]
+> xtrim t minid 7
+:2
+> xlen t
+:0
+> xinfo stream t
+["length", :0, "radix-tree-keys", :0, "radix-tree-nodes", :1, "last-generated-id", "6-1", "max-deleted-entry-id", "0-0", "entries-added", :6, "recorded-first-entry-id", "0-0", "groups", :0, "first-entry", (nil), "last-entry", (nil)]
+> xtrim t
+-ERR wrong number of arguments for 'xtrim' command
+> xtrim t maxlen
+-ERR wrong number of arguments for 'xtrim' command
+> xtrim t foo 1
+-ERR syntax error
+> xtrim t maxlen x
+-ERR value is not an integer or out of range
+> xtrim t maxlen -1
+-ERR The MAXLEN argument must be >= 0.
+> xtrim t minid abc
+-ERR Invalid stream ID specified as stream command argument
+> xtrim t maxlen 1 minid 2
+-ERR syntax error, MAXLEN and MINID options at the same time are not compatible
+> xtrim nokey maxlen 1
+:0
+> xtrim t limit 5
+-ERR syntax error, LIMIT cannot be used without specifying a trimming strategy
+> xtrim t maxlen 5 limit 5
+-ERR syntax error, LIMIT cannot be used without the special ~ option
+> xadd t maxlen 2 8-1 a 8
+"8-1"
+> xadd t maxlen 2 9-1 a 9
+"9-1"
+> xrange t - +
+[["8-1", ["a", "8"]], ["9-1", ["a", "9"]]]
+> xadd t minid 9-1 10-1 a 10
+"10-1"
+> xrange t - +
+[["9-1", ["a", "9"]], ["10-1", ["a", "10"]]]
+> xadd t maxlen 0 11-1 a 11
+"11-1"
+> xlen t
+:0
+> xinfo stream t
+["length", :0, "radix-tree-keys", :0, "radix-tree-nodes", :1, "last-generated-id", "11-1", "max-deleted-entry-id", "0-0", "entries-added", :10, "recorded-first-entry-id", "0-0", "groups", :0, "first-entry", (nil), "last-entry", (nil)]
+## xdel-setid
+> xadd d 1-1 a 1
+"1-1"
+> xadd d 2-1 a 2
+"2-1"
+> xadd d 3-1 a 3
+"3-1"
+> xdel d 2-1
+:1
+> xdel d 2-1
+:0
+> xdel d 9-9 1-1
+:1
+> xinfo stream d
+["length", :1, "radix-tree-keys", :1, "radix-tree-nodes", :2, "last-generated-id", "3-1", "max-deleted-entry-id", "2-1", "entries-added", :3, "recorded-first-entry-id", "3-1", "groups", :0, "first-entry", ["3-1", ["a", "3"]], "last-entry", ["3-1", ["a", "3"]]]
+> xdel d abc
+-ERR Invalid stream ID specified as stream command argument
+> xdel d
+-ERR wrong number of arguments for 'xdel' command
+> xdel nokey 1-1
+:0
+> xdel nokey abc
+:0
+> xdel d 3-1
+:1
+> xinfo stream d
+["length", :0, "radix-tree-keys", :0, "radix-tree-nodes", :1, "last-generated-id", "3-1", "max-deleted-entry-id", "3-1", "entries-added", :3, "recorded-first-entry-id", "0-0", "groups", :0, "first-entry", (nil), "last-entry", (nil)]
+> xlen d
+:0
+> xadd d 4-1 a 4
+"4-1"
+> xinfo stream d
+["length", :1, "radix-tree-keys", :1, "radix-tree-nodes", :2, "last-generated-id", "4-1", "max-deleted-entry-id", "3-1", "entries-added", :4, "recorded-first-entry-id", "4-1", "groups", :0, "first-entry", ["4-1", ["a", "4"]], "last-entry", ["4-1", ["a", "4"]]]
+> xsetid d 4-1
++OK
+> xsetid d 3-1
+-ERR The ID specified in XSETID is smaller than the target stream top item
+> xsetid d 10-0 entriesadded 100
++OK
+> xinfo stream d
+["length", :1, "radix-tree-keys", :1, "radix-tree-nodes", :2, "last-generated-id", "10-0", "max-deleted-entry-id", "3-1", "entries-added", :100, "recorded-first-entry-id", "4-1", "groups", :0, "first-entry", ["4-1", ["a", "4"]], "last-entry", ["4-1", ["a", "4"]]]
+> xsetid d 10-0 entriesadded 0
+-ERR The entries_added specified in XSETID is smaller than the target stream length
+> xsetid d 10-0 entriesadded -1
+-ERR entries_added must be positive
+> xsetid d 10-0 maxdeletedid 11-0
+-ERR The ID specified in XSETID is smaller than the provided max_deleted_entry_id
+> xsetid d 10-0 maxdeletedid 3-0
++OK
+> xsetid d 10-0 maxdeletedid abc
+-ERR Invalid stream ID specified as stream command argument
+> xsetid d 10-0 foo
+-ERR syntax error
+> xsetid d 10-0 entriesadded
+-ERR syntax error
+> xsetid nokey 1-1
+-ERR no such key
+> xsetid d abc
+-ERR Invalid stream ID specified as stream command argument
+> xsetid d
+-ERR wrong number of arguments for 'xsetid' command
+> xsetid d 9-0
++OK
+> xinfo stream d
+["length", :1, "radix-tree-keys", :1, "radix-tree-nodes", :2, "last-generated-id", "9-0", "max-deleted-entry-id", "3-0", "entries-added", :100, "recorded-first-entry-id", "4-1", "groups", :0, "first-entry", ["4-1", ["a", "4"]], "last-entry", ["4-1", ["a", "4"]]]
+## xread
+> xadd a 1-1 f v1
+"1-1"
+> xadd a 2-1 f v2 g w2
+"2-1"
+> xadd a 3-1 f v3
+"3-1"
+> xadd b 1-1 x y
+"1-1"
+> set str v
++OK
+> xread streams a 0
+[["a", [["1-1", ["f", "v1"]], ["2-1", ["f", "v2", "g", "w2"]], ["3-1", ["f", "v3"]]]]]
+> xread streams a 0-0
+[["a", [["1-1", ["f", "v1"]], ["2-1", ["f", "v2", "g", "w2"]], ["3-1", ["f", "v3"]]]]]
+> xread streams a 1-1
+[["a", [["2-1", ["f", "v2", "g", "w2"]], ["3-1", ["f", "v3"]]]]]
+> xread streams a 3-1
+(nil)
+> xread streams a 99
+(nil)
+> xread count 2 streams a 0
+[["a", [["1-1", ["f", "v1"]], ["2-1", ["f", "v2", "g", "w2"]]]]]
+> xread count 0 streams a 0
+[["a", [["1-1", ["f", "v1"]], ["2-1", ["f", "v2", "g", "w2"]], ["3-1", ["f", "v3"]]]]]
+> xread count -1 streams a 0
+[["a", [["1-1", ["f", "v1"]], ["2-1", ["f", "v2", "g", "w2"]], ["3-1", ["f", "v3"]]]]]
+> xread streams a b 0 0
+[["a", [["1-1", ["f", "v1"]], ["2-1", ["f", "v2", "g", "w2"]], ["3-1", ["f", "v3"]]]], ["b", [["1-1", ["x", "y"]]]]]
+> xread streams a b 3-1 0
+[["b", [["1-1", ["x", "y"]]]]]
+> xread streams a b 3-1 1-1
+(nil)
+> xread streams a nokey 0 0
+[["a", [["1-1", ["f", "v1"]], ["2-1", ["f", "v2", "g", "w2"]], ["3-1", ["f", "v3"]]]]]
+> xread streams nokey 0
+(nil)
+> xread streams a $
+(nil)
+> xread streams a +
+[["a", [["3-1", ["f", "v3"]]]]]
+> xread streams b +
+[["b", [["1-1", ["x", "y"]]]]]
+> xread streams nokey +
+(nil)
+> xread streams a >
+-ERR The > ID can be specified only when calling XREADGROUP using the GROUP <group> <consumer> option.
+> xread streams str 0
+-WRONGTYPE Operation against a key holding the wrong kind of value
+> xread streams a str 0 0
+-WRONGTYPE Operation against a key holding the wrong kind of value
+> xread streams a str 3-1 0
+-WRONGTYPE Operation against a key holding the wrong kind of value
+> xread streams a abc
+-ERR Invalid stream ID specified as stream command argument
+> xread streams a
+-ERR wrong number of arguments for 'xread' command
+> xread streams a b 0
+-ERR Unbalanced 'xread' list of streams: for each stream key an ID or '$' must be specified.
+> xread streams
+-ERR wrong number of arguments for 'xread' command
+> xread
+-ERR wrong number of arguments for 'xread' command
+> xread foo
+-ERR wrong number of arguments for 'xread' command
+> xread count
+-ERR wrong number of arguments for 'xread' command
+> xread count x streams a 0
+-ERR value is not an integer or out of range
+> xread block x streams a 0
+-ERR timeout is not an integer or out of range
+> xread block -1 streams a 0
+-ERR timeout is negative
+> xread block 1 streams a 3-1
+(nil)
+> xread block 0 streams a 0
+[["a", [["1-1", ["f", "v1"]], ["2-1", ["f", "v2", "g", "w2"]], ["3-1", ["f", "v3"]]]]]
+> xread group g c streams a 0
+-ERR The GROUP option is only supported by XREADGROUP. You called XREAD instead.
+> xread noack streams a 0
+-ERR The NOACK option is only supported by XREADGROUP. You called XREAD instead.
+> xread streams a 1
+[["a", [["1-1", ["f", "v1"]], ["2-1", ["f", "v2", "g", "w2"]], ["3-1", ["f", "v3"]]]]]
+> xread streams a 1-
+-ERR Invalid stream ID specified as stream command argument
+> xread streams a -
+-ERR Invalid stream ID specified as stream command argument
+> xread streams a 18446744073709551615-18446744073709551615
+(nil)
+> xread streams a 0 0
+-ERR Unbalanced 'xread' list of streams: for each stream key an ID or '$' must be specified.
+## group-admin
+> xadd s 1-1 a 1
+"1-1"
+> xadd s 2-1 a 2
+"2-1"
+> xadd s 3-1 a 3
+"3-1"
+> xgroup create s g1 0
++OK
+> xgroup create s g1 0
+-BUSYGROUP Consumer Group name already exists
+> xgroup create s g2 $
++OK
+> xgroup create s g3 2-1
++OK
+> xgroup create s g4 0 entriesread 0
++OK
+> xgroup create s g5 0 entriesread 2
++OK
+> xgroup create s g6 0 entriesread -1
++OK
+> xgroup create s g7 0 entriesread -2
+-ERR value for ENTRIESREAD must be positive or -1
+> xgroup create s g8 0 entriesread x
+-ERR value is not an integer or out of range
+> xgroup create s g9 0 entriesread
+-ERR unknown subcommand or wrong number of arguments for 'create'. Try XGROUP HELP.
+> xgroup create s g0 0 foo
+-ERR unknown subcommand or wrong number of arguments for 'create'. Try XGROUP HELP.
+> xgroup create nokey g 0
+-ERR The XGROUP subcommand requires the key to exist. Note that for CREATE you may want to use the MKSTREAM option to create an empty stream automatically.
+> xgroup create nokey g 0 mkstream
++OK
+> xgroup create nokey2 g $ mkstream
++OK
+> xinfo stream nokey full @t
+["length", :0, "radix-tree-keys", :0, "radix-tree-nodes", :1, "last-generated-id", "0-0", "max-deleted-entry-id", "0-0", "entries-added", :0, "recorded-first-entry-id", "0-0", "entries", [], "groups", [["name", "g", "last-delivered-id", "0-0", "entries-read", (nil), "lag", :0, "pel-count", :0, "pending", [], "consumers", []]]]
+> xinfo stream nokey2
+["length", :0, "radix-tree-keys", :0, "radix-tree-nodes", :1, "last-generated-id", "0-0", "max-deleted-entry-id", "0-0", "entries-added", :0, "recorded-first-entry-id", "0-0", "groups", :1, "first-entry", (nil), "last-entry", (nil)]
+> xgroup create s gz abc
+-ERR Invalid stream ID specified as stream command argument
+> xgroup create s gz -
+-ERR Invalid stream ID specified as stream command argument
+> xgroup create s gz +
+-ERR Invalid stream ID specified as stream command argument
+> xgroup create str g 0
+-ERR The XGROUP subcommand requires the key to exist. Note that for CREATE you may want to use the MKSTREAM option to create an empty stream automatically.
+> xgroup create s
+-ERR wrong number of arguments for 'xgroup|create' command
+> xgroup create s g
+-ERR wrong number of arguments for 'xgroup|create' command
+> xgroup
+-ERR wrong number of arguments for 'xgroup' command
+> xgroup foo
+-ERR unknown subcommand 'foo'. Try XGROUP HELP.
+> xgroup foo s g
+-ERR unknown subcommand 'foo'. Try XGROUP HELP.
+> xgroup help
+[+XGROUP <subcommand> [<arg> [value] [opt] ...]. Subcommands are:, +CREATE <key> <groupname> <id|$> [option], +    Create a new consumer group. Options are:, +    * MKSTREAM, +      Create the empty stream if it does not exist., +    * ENTRIESREAD entries_read, +      Set the group's entries_read counter (internal use)., +CREATECONSUMER <key> <groupname> <consumer>, +    Create a new consumer in the specified group., +DELCONSUMER <key> <groupname> <consumer>, +    Remove the specified consumer., +DESTROY <key> <groupname>, +    Remove the specified group., +SETID <key> <groupname> <id|$> [ENTRIESREAD entries_read], +    Set the current group ID and entries_read counter., +HELP, +    Print this help.]
+> xgroup setid s g1 2-1
++OK
+> xgroup setid s g1 $
++OK
+> xgroup setid s g1 0 entriesread 1
++OK
+> xgroup setid s g1 +
++OK
+> xgroup setid s g1 -
++OK
+> xgroup setid s nog 0
+-NOGROUP No such consumer group 'nog' for key name 's'
+> xgroup setid nokey9 g 0
+-ERR The XGROUP subcommand requires the key to exist. Note that for CREATE you may want to use the MKSTREAM option to create an empty stream automatically.
+> xgroup setid s g1 abc
+-ERR Invalid stream ID specified as stream command argument
+> xgroup setid s g1
+-ERR wrong number of arguments for 'xgroup|setid' command
+> xgroup setid s g1 0 mkstream
+-ERR unknown subcommand or wrong number of arguments for 'setid'. Try XGROUP HELP.
+> xgroup setid s g1 0 entriesread -5
+-ERR value for ENTRIESREAD must be positive or -1
+> xgroup createconsumer s g1 c1
+:1
+> xgroup createconsumer s g1 c1
+:0
+> xgroup createconsumer s nog c1
+-NOGROUP No such consumer group 'nog' for key name 's'
+> xgroup createconsumer nokey9 g c
+-ERR The XGROUP subcommand requires the key to exist. Note that for CREATE you may want to use the MKSTREAM option to create an empty stream automatically.
+> xgroup createconsumer s g1
+-ERR wrong number of arguments for 'xgroup|createconsumer' command
+> xgroup createconsumer s g1 c extra
+-ERR wrong number of arguments for 'xgroup|createconsumer' command
+> xgroup delconsumer s g1 c1
+:0
+> xgroup delconsumer s g1 c1
+:0
+> xgroup delconsumer s nog c1
+-NOGROUP No such consumer group 'nog' for key name 's'
+> xgroup delconsumer s g1
+-ERR wrong number of arguments for 'xgroup|delconsumer' command
+> xgroup destroy s g1
+:1
+> xgroup destroy s g1
+:0
+> xgroup destroy nokey9 g
+-ERR The XGROUP subcommand requires the key to exist. Note that for CREATE you may want to use the MKSTREAM option to create an empty stream automatically.
+> xgroup destroy s
+-ERR wrong number of arguments for 'xgroup|destroy' command
+> xgroup destroy s g extra
+-ERR wrong number of arguments for 'xgroup|destroy' command
+> xinfo groups s
+[["name", "g2", "consumers", :0, "pending", :0, "last-delivered-id", "3-1", "entries-read", (nil), "lag", :0], ["name", "g3", "consumers", :0, "pending", :0, "last-delivered-id", "2-1", "entries-read", (nil), "lag", (nil)], ["name", "g4", "consumers", :0, "pending", :0, "last-delivered-id", "0-0", "entries-read", :0, "lag", :3], ["name", "g5", "consumers", :0, "pending", :0, "last-delivered-id", "0-0", "entries-read", :2, "lag", :3], ["name", "g6", "consumers", :0, "pending", :0, "last-delivered-id", "0-0", "entries-read", (nil), "lag", :3]]
+> xinfo groups nokey9
+-ERR no such key
+> xinfo groups
+-ERR wrong number of arguments for 'xinfo|groups' command
+> xinfo groups str
+-ERR no such key
+> xinfo consumers s g2 @t
+[]
+> xinfo consumers s nog @t
+-NOGROUP No such consumer group 'nog' for key name 's'
+> xinfo consumers nokey9 g @t
+-ERR no such key
+> xinfo consumers s @t
+-ERR wrong number of arguments for 'xinfo|consumers' command
+> xinfo help
+[+XINFO <subcommand> [<arg> [value] [opt] ...]. Subcommands are:, +CONSUMERS <key> <groupname>, +    Show consumers of <groupname>., +GROUPS <key>, +    Show the stream consumer groups., +STREAM <key> [FULL [COUNT <count>], +    Show information about the stream., +HELP, +    Print this help.]
+> xinfo foo
+-ERR unknown subcommand 'foo'. Try XINFO HELP.
+> xinfo foo s
+-ERR unknown subcommand 'foo'. Try XINFO HELP.
+> xinfo stream
+-ERR wrong number of arguments for 'xinfo|stream' command
+> xinfo stream s foo
+-ERR unknown subcommand or wrong number of arguments for 'stream'. Try XINFO HELP.
+> xinfo stream s full @t
+["length", :3, "radix-tree-keys", :1, "radix-tree-nodes", :2, "last-generated-id", "3-1", "max-deleted-entry-id", "0-0", "entries-added", :3, "recorded-first-entry-id", "1-1", "entries", [["1-1", ["a", "1"]], ["2-1", ["a", "2"]], ["3-1", ["a", "3"]]], "groups", [["name", "g2", "last-delivered-id", "3-1", "entries-read", (nil), "lag", :0, "pel-count", :0, "pending", [], "consumers", []], ["name", "g3", "last-delivered-id", "2-1", "entries-read", (nil), "lag", (nil), "pel-count", :0, "pending", [], "consumers", []], ["name", "g4", "last-delivered-id", "0-0", "entries-read", :0, "lag", :3, "pel-count", :0, "pending", [], "consumers", []], ["name", "g5", "last-delivered-id", "0-0", "entries-read", :2, "lag", :3, "pel-count", :0, "pending", [], "consumers", []], ["name", "g6", "last-delivered-id", "0-0", "entries-read", (nil), "lag", :3, "pel-count", :0, "pending", [], "consumers", []]]]
+> xinfo stream s full count 1 @t
+["length", :3, "radix-tree-keys", :1, "radix-tree-nodes", :2, "last-generated-id", "3-1", "max-deleted-entry-id", "0-0", "entries-added", :3, "recorded-first-entry-id", "1-1", "entries", [["1-1", ["a", "1"]]], "groups", [["name", "g2", "last-delivered-id", "3-1", "entries-read", (nil), "lag", :0, "pel-count", :0, "pending", [], "consumers", []], ["name", "g3", "last-delivered-id", "2-1", "entries-read", (nil), "lag", (nil), "pel-count", :0, "pending", [], "consumers", []], ["name", "g4", "last-delivered-id", "0-0", "entries-read", :0, "lag", :3, "pel-count", :0, "pending", [], "consumers", []], ["name", "g5", "last-delivered-id", "0-0", "entries-read", :2, "lag", :3, "pel-count", :0, "pending", [], "consumers", []], ["name", "g6", "last-delivered-id", "0-0", "entries-read", (nil), "lag", :3, "pel-count", :0, "pending", [], "consumers", []]]]
+> xinfo stream s full count 0 @t
+["length", :3, "radix-tree-keys", :1, "radix-tree-nodes", :2, "last-generated-id", "3-1", "max-deleted-entry-id", "0-0", "entries-added", :3, "recorded-first-entry-id", "1-1", "entries", [["1-1", ["a", "1"]], ["2-1", ["a", "2"]], ["3-1", ["a", "3"]]], "groups", [["name", "g2", "last-delivered-id", "3-1", "entries-read", (nil), "lag", :0, "pel-count", :0, "pending", [], "consumers", []], ["name", "g3", "last-delivered-id", "2-1", "entries-read", (nil), "lag", (nil), "pel-count", :0, "pending", [], "consumers", []], ["name", "g4", "last-delivered-id", "0-0", "entries-read", :0, "lag", :3, "pel-count", :0, "pending", [], "consumers", []], ["name", "g5", "last-delivered-id", "0-0", "entries-read", :2, "lag", :3, "pel-count", :0, "pending", [], "consumers", []], ["name", "g6", "last-delivered-id", "0-0", "entries-read", (nil), "lag", :3, "pel-count", :0, "pending", [], "consumers", []]]]
+> xinfo stream s full count x @t
+-ERR value is not an integer or out of range
+> xinfo stream s full count @t
+-ERR unknown subcommand or wrong number of arguments for 'stream'. Try XINFO HELP.
+> xinfo stream s count 1
+-ERR unknown subcommand or wrong number of arguments for 'stream'. Try XINFO HELP.
+> xinfo stream str
+-ERR no such key
+## readgroup
+> xadd s 1-1 a 1
+"1-1"
+> xadd s 2-1 a 2
+"2-1"
+> xadd s 3-1 a 3
+"3-1"
+> xadd s 4-1 a 4
+"4-1"
+> xadd s 5-1 a 5
+"5-1"
+> xgroup create s g 0
++OK
+> xreadgroup group g c1 count 2 streams s >
+[["s", [["1-1", ["a", "1"]], ["2-1", ["a", "2"]]]]]
+> xpending s g
+[:2, "1-1", "2-1", [["c1", "2"]]]
+> xpending s g - + 10 @t
+[["1-1", "c1", :_, :1], ["2-1", "c1", :_, :1]]
+> xpending s g - + 10 c1 @t
+[["1-1", "c1", :_, :1], ["2-1", "c1", :_, :1]]
+> xpending s g - + 10 c2 @t
+[]
+> xreadgroup group g c2 count 1 streams s >
+[["s", [["3-1", ["a", "3"]]]]]
+> xreadgroup group g c1 streams s 0
+[["s", [["1-1", ["a", "1"]], ["2-1", ["a", "2"]]]]]
+> xreadgroup group g c1 streams s 1-1
+[["s", [["2-1", ["a", "2"]]]]]
+> xreadgroup group g c1 streams s 2-1
+[["s", []]]
+> xreadgroup group g c1 streams s 9-9
+[["s", []]]
+> xreadgroup group g c2 streams s 0
+[["s", [["3-1", ["a", "3"]]]]]
+> xreadgroup group g c3 streams s 0
+[["s", []]]
+> xpending s g - + 10 @t
+[["1-1", "c1", :_, :2], ["2-1", "c1", :_, :3], ["3-1", "c2", :_, :2]]
+> xpending s g
+[:3, "1-1", "3-1", [["c1", "2"], ["c2", "1"]]]
+> xinfo groups s
+[["name", "g", "consumers", :3, "pending", :3, "last-delivered-id", "3-1", "entries-read", :3, "lag", :2]]
+> xinfo consumers s g @t
+[["name", "c1", "pending", :2, "idle", _, "inactive", _], ["name", "c2", "pending", :1, "idle", _, "inactive", _], ["name", "c3", "pending", :0, "idle", _, "inactive", :-1]]
+> xreadgroup group g c3 streams s >
+[["s", [["4-1", ["a", "4"]], ["5-1", ["a", "5"]]]]]
+> xreadgroup group g c3 streams s >
+(nil)
+> xpending s g
+[:5, "1-1", "5-1", [["c1", "2"], ["c2", "1"], ["c3", "2"]]]
+> xreadgroup group g c3 noack streams s >
+(nil)
+> xinfo groups s
+[["name", "g", "consumers", :3, "pending", :5, "last-delivered-id", "5-1", "entries-read", :5, "lag", :0]]
+> xadd s 6-1 a 6
+"6-1"
+> xadd s 7-1 a 7
+"7-1"
+> xreadgroup group g c3 noack count 1 streams s >
+[["s", [["6-1", ["a", "6"]]]]]
+> xpending s g - + 10 @t
+[["1-1", "c1", :_, :2], ["2-1", "c1", :_, :3], ["3-1", "c2", :_, :2], ["4-1", "c3", :_, :1], ["5-1", "c3", :_, :1]]
+> xinfo groups s
+[["name", "g", "consumers", :3, "pending", :5, "last-delivered-id", "6-1", "entries-read", :6, "lag", :1]]
+> xinfo stream s full @t
+["length", :7, "radix-tree-keys", :1, "radix-tree-nodes", :2, "last-generated-id", "7-1", "max-deleted-entry-id", "0-0", "entries-added", :7, "recorded-first-entry-id", "1-1", "entries", [["1-1", ["a", "1"]], ["2-1", ["a", "2"]], ["3-1", ["a", "3"]], ["4-1", ["a", "4"]], ["5-1", ["a", "5"]], ["6-1", ["a", "6"]], ["7-1", ["a", "7"]]], "groups", [["name", "g", "last-delivered-id", "6-1", "entries-read", :6, "lag", :1, "pel-count", :5, "pending", [["1-1", "c1", :_, :2], ["2-1", "c1", :_, :3], ["3-1", "c2", :_, :2], ["4-1", "c3", :_, :1], ["5-1", "c3", :_, :1]], "consumers", [["name", "c1", "seen-time", :_, "active-time", :_, "pel-count", :2, "pending", [["1-1", :_, :2], ["2-1", :_, :3]]], ["name", "c2", "seen-time", :_, "active-time", :_, "pel-count", :1, "pending", [["3-1", :_, :2]]], ["name", "c3", "seen-time", :_, "active-time", :_, "pel-count", :2, "pending", [["4-1", :_, :1], ["5-1", :_, :1]]]]]]]
+> xreadgroup group g c3 count 0 streams s >
+[["s", [["7-1", ["a", "7"]]]]]
+> xreadgroup group g c3 streams s >
+(nil)
+> xack s g 1-1
+:1
+> xack s g 1-1
+:0
+> xack s g 2-1 3-1 9-9
+:2
+> xack s nog 1-1
+:0
+> xack nokey g 1-1
+:0
+> xack s g abc
+-ERR Invalid stream ID specified as stream command argument
+> xack s g 4-1 abc
+-ERR Invalid stream ID specified as stream command argument
+> xack s g
+-ERR wrong number of arguments for 'xack' command
+> xack s
+-ERR wrong number of arguments for 'xack' command
+> xpending s g
+[:3, "4-1", "7-1", [["c3", "3"]]]
+> xreadgroup group g c3 streams s >
+(nil)
+> xreadgroup group nog c3 streams s >
+-NOGROUP No such key 's' or consumer group 'nog' in XREADGROUP with GROUP option
+> xreadgroup group g c3 streams nokey >
+-NOGROUP No such key 'nokey' or consumer group 'g' in XREADGROUP with GROUP option
+> xreadgroup group g c3 streams s $
+-ERR The $ ID is meaningless in the context of XREADGROUP: you want to read the history of this consumer by specifying a proper ID, or use the > ID to get new messages. The $ ID would just return an empty result set.
+> xreadgroup group g c3 streams s +
+-ERR The + ID is meaningless in the context of XREADGROUP: you want to read the history of this consumer by specifying a proper ID, or use the > ID to get new messages. The + ID would just return an empty result set.
+> xreadgroup group g c3 streams s abc
+-ERR Invalid stream ID specified as stream command argument
+> xreadgroup group g c3 streams s
+-ERR wrong number of arguments for 'xreadgroup' command
+> xreadgroup group g c3 streams s > >
+-ERR Unbalanced 'xreadgroup' list of streams: for each stream key an ID or '>' must be specified.
+> xreadgroup streams s >
+-ERR wrong number of arguments for 'xreadgroup' command
+> xreadgroup group g streams s >
+-ERR wrong number of arguments for 'xreadgroup' command
+> xreadgroup group g c3
+-ERR wrong number of arguments for 'xreadgroup' command
+> xreadgroup group g c3 foo
+-ERR wrong number of arguments for 'xreadgroup' command
+> xreadgroup count x group g c3 streams s >
+-ERR value is not an integer or out of range
+> xreadgroup group g c3 block x streams s >
+-ERR timeout is not an integer or out of range
+> xreadgroup group g c3 block 1 streams s >
+(nil)
+> xreadgroup group g c3 block 0 streams s 0
+[["s", [["4-1", ["a", "4"]], ["5-1", ["a", "5"]], ["7-1", ["a", "7"]]]]]
+> xreadgroup noack group g c3 streams s 0
+[["s", [["4-1", ["a", "4"]], ["5-1", ["a", "5"]], ["7-1", ["a", "7"]]]]]
+> xread group g c3 streams s 0
+-ERR The GROUP option is only supported by XREADGROUP. You called XREAD instead.
+> xread noack streams s 0
+-ERR The NOACK option is only supported by XREADGROUP. You called XREAD instead.
+## readgroup-multi
+> xadd a 1-1 f 1
+"1-1"
+> xadd a 2-1 f 2
+"2-1"
+> xadd b 1-1 f 1
+"1-1"
+> xgroup create a g 0
++OK
+> xgroup create b g 0
++OK
+> xgroup create b h 0
++OK
+> xreadgroup group g c streams a b > >
+[["a", [["1-1", ["f", "1"]], ["2-1", ["f", "2"]]]], ["b", [["1-1", ["f", "1"]]]]]
+> xreadgroup group g c streams a b > >
+(nil)
+> xadd a 3-1 f 3
+"3-1"
+> xreadgroup group g c streams a b > >
+[["a", [["3-1", ["f", "3"]]]]]
+> xreadgroup group g c streams a b 0 0
+[["a", [["1-1", ["f", "1"]], ["2-1", ["f", "2"]], ["3-1", ["f", "3"]]]], ["b", [["1-1", ["f", "1"]]]]]
+> xreadgroup group g c streams a b 0 >
+[["a", [["1-1", ["f", "1"]], ["2-1", ["f", "2"]], ["3-1", ["f", "3"]]]]]
+> xreadgroup group h c streams a b > >
+-NOGROUP No such key 'a' or consumer group 'h' in XREADGROUP with GROUP option
+> xreadgroup group g c streams a b > 0
+[["b", [["1-1", ["f", "1"]]]]]
+> set str v
++OK
+> xreadgroup group g c streams a str > >
+-WRONGTYPE Operation against a key holding the wrong kind of value
+> xreadgroup group g c streams str a > >
+-WRONGTYPE Operation against a key holding the wrong kind of value
+> xinfo groups a
+[["name", "g", "consumers", :1, "pending", :3, "last-delivered-id", "3-1", "entries-read", :3, "lag", :0]]
+> xinfo groups b
+[["name", "g", "consumers", :1, "pending", :1, "last-delivered-id", "1-1", "entries-read", :1, "lag", :0], ["name", "h", "consumers", :0, "pending", :0, "last-delivered-id", "0-0", "entries-read", (nil), "lag", :1]]
+## pending-claim
+> xadd s 1-1 a 1
+"1-1"
+> xadd s 2-1 a 2
+"2-1"
+> xadd s 3-1 a 3
+"3-1"
+> xadd s 4-1 a 4
+"4-1"
+> xgroup create s g 0
++OK
+> xreadgroup group g c1 streams s >
+[["s", [["1-1", ["a", "1"]], ["2-1", ["a", "2"]], ["3-1", ["a", "3"]], ["4-1", ["a", "4"]]]]]
+> sleep 0.4
+> xpending s g - + 10 idle 100 @t
+[]
+> xpending s g - + 10 idle 100000 @t
+[]
+> xpending s g idle 100 - + 10 @t
+[["1-1", "c1", :_, :1], ["2-1", "c1", :_, :1], ["3-1", "c1", :_, :1], ["4-1", "c1", :_, :1]]
+> xpending s g idle 100 - + 10 c1 @t
+[["1-1", "c1", :_, :1], ["2-1", "c1", :_, :1], ["3-1", "c1", :_, :1], ["4-1", "c1", :_, :1]]
+> xpending s g - + 0 @t
+[]
+> xpending s g - + -1 @t
+[]
+> xpending s g (1-1 + 10 @t
+[["2-1", "c1", :_, :1], ["3-1", "c1", :_, :1], ["4-1", "c1", :_, :1]]
+> xpending s g - (3-1 10 @t
+[["1-1", "c1", :_, :1], ["2-1", "c1", :_, :1]]
+> xpending s g (0-0 + 10 @t
+[["1-1", "c1", :_, :1], ["2-1", "c1", :_, :1], ["3-1", "c1", :_, :1], ["4-1", "c1", :_, :1]]
+> xpending s g - + x @t
+-ERR value is not an integer or out of range
+> xpending s g idle x - + 10 @t
+-ERR value is not an integer or out of range
+> xpending s g idle 100 @t
+-ERR syntax error
+> xpending s g idle 100 - + @t
+-ERR syntax error
+> xpending s g - + @t
+-ERR syntax error
+> xpending s g - + 10 c1 extra @t
+[["1-1", "c1", :_, :1], ["2-1", "c1", :_, :1], ["3-1", "c1", :_, :1], ["4-1", "c1", :_, :1]]
+> xpending s g 1 3 10 @t
+[["1-1", "c1", :_, :1], ["2-1", "c1", :_, :1], ["3-1", "c1", :_, :1]]
+> xpending s g 3 1 10 @t
+[]
+> xpending s nog - + 10 @t
+-NOGROUP No such key 's' or consumer group 'nog'
+> xpending nokey g - + 10 @t
+-NOGROUP No such key 'nokey' or consumer group 'g'
+> xpending nokey g
+-NOGROUP No such key 'nokey' or consumer group 'g'
+> xpending s nog
+-NOGROUP No such key 's' or consumer group 'nog'
+> xpending s
+-ERR wrong number of arguments for 'xpending' command
+> xpending
+-ERR wrong number of arguments for 'xpending' command
+> xpending s g a b 5 @t
+-ERR Invalid stream ID specified as stream command argument
+> xclaim s g c2 0 1-1
+[["1-1", ["a", "1"]]]
+> xpending s g - + 10 @t
+[["1-1", "c2", :_, :2], ["2-1", "c1", :_, :1], ["3-1", "c1", :_, :1], ["4-1", "c1", :_, :1]]
+> xclaim s g c2 100000 2-1
+[]
+> xclaim s g c2 100 2-1 3-1 justid
+["2-1", "3-1"]
+> xpending s g - + 10 @t
+[["1-1", "c2", :_, :2], ["2-1", "c2", :_, :1], ["3-1", "c2", :_, :1], ["4-1", "c1", :_, :1]]
+> xclaim s g c3 0 4-1 retrycount 10
+[["4-1", ["a", "4"]]]
+> xclaim s g c3 0 4-1 retrycount 10 justid
+["4-1"]
+> xclaim s g c3 0 4-1 idle 100000 justid
+["4-1"]
+> xclaim s g c3 0 4-1 time 1 justid
+["4-1"]
+> xclaim s g c3 0 9-1
+[]
+> xclaim s g c3 0 9-1 force
+[]
+> xclaim s g c3 0 9-1 force justid
+[]
+> xclaim s g c3 0 3-1 lastid 9-9
+[["3-1", ["a", "3"]]]
+> xinfo groups s
+[["name", "g", "consumers", :3, "pending", :4, "last-delivered-id", "9-9", "entries-read", :4, "lag", :0]]
+> xclaim s g c3 0 3-1 lastid abc
+-ERR Invalid stream ID specified as stream command argument
+> xclaim s g c3 0 3-1 foo
+-ERR Unrecognized XCLAIM option 'foo'
+> xclaim s g c3 0 3-1 idle
+-ERR Unrecognized XCLAIM option 'idle'
+> xclaim s g c3 0 3-1 idle x
+-ERR Invalid IDLE option argument for XCLAIM
+> xclaim s g c3 0 3-1 time x
+-ERR Invalid TIME option argument for XCLAIM
+> xclaim s g c3 0 3-1 retrycount x
+-ERR Invalid RETRYCOUNT option argument for XCLAIM
+> xclaim s g c3 x 3-1
+-ERR Invalid min-idle-time argument for XCLAIM
+> xclaim s g c3 -5 3-1
+[["3-1", ["a", "3"]]]
+> xclaim s g c3 0
+-ERR wrong number of arguments for 'xclaim' command
+> xclaim s g c4 0 force
+[]
+> xclaim s g c3
+-ERR wrong number of arguments for 'xclaim' command
+> xclaim s nog c3 0 3-1
+-NOGROUP No such key 's' or consumer group 'nog'
+> xclaim nokey g c3 0 3-1
+-NOGROUP No such key 'nokey' or consumer group 'g'
+> xclaim s g c3 0 abc
+-ERR Unrecognized XCLAIM option 'abc'
+> xdel s 3-1
+:1
+> xclaim s g c3 0 3-1 1-1 justid
+["1-1"]
+> xpending s g - + 10 @t
+[["1-1", "c3", :_, :2], ["2-1", "c2", :_, :1], ["4-1", "c3", :_, :10]]
+> xinfo consumers s g @t
+[["name", "c1", "pending", :0, "idle", _, "inactive", _], ["name", "c2", "pending", :1, "idle", _, "inactive", _], ["name", "c3", "pending", :2, "idle", _, "inactive", _], ["name", "c4", "pending", :0, "idle", _, "inactive", :-1]]
+## autoclaim
+> xadd s 1-1 a 1
+"1-1"
+> xadd s 2-1 a 2
+"2-1"
+> xadd s 3-1 a 3
+"3-1"
+> xadd s 4-1 a 4
+"4-1"
+> xadd s 5-1 a 5
+"5-1"
+> xgroup create s g 0
++OK
+> xreadgroup group g c1 streams s >
+[["s", [["1-1", ["a", "1"]], ["2-1", ["a", "2"]], ["3-1", ["a", "3"]], ["4-1", ["a", "4"]], ["5-1", ["a", "5"]]]]]
+> sleep 0.3
+> xautoclaim s g c2 100 0
+["0-0", [["1-1", ["a", "1"]], ["2-1", ["a", "2"]], ["3-1", ["a", "3"]], ["4-1", ["a", "4"]], ["5-1", ["a", "5"]]], []]
+> xpending s g - + 10 @t
+[["1-1", "c2", :_, :2], ["2-1", "c2", :_, :2], ["3-1", "c2", :_, :2], ["4-1", "c2", :_, :2], ["5-1", "c2", :_, :2]]
+> xautoclaim s g c2 100 0 count 2
+["0-0", [], []]
+> xautoclaim s g c3 100 0 count 2
+["0-0", [], []]
+> xautoclaim s g c3 100 0 count 2 justid
+["0-0", [], []]
+> xautoclaim s g c3 100 3-1 count 1
+["0-0", [], []]
+> xautoclaim s g c3 100 (3-1 count 1
+["0-0", [], []]
+> xautoclaim s g c3 100000 0
+["0-0", [], []]
+> xautoclaim s g c3 100 -
+["0-0", [], []]
+> xautoclaim s g c3 100 +
+["0-0", [], []]
+> xautoclaim s g c3 100 (0-0
+["0-0", [], []]
+> xautoclaim s g c3 100 0 count 0
+-ERR COUNT must be > 0
+> xautoclaim s g c3 100 0 count -1
+-ERR COUNT must be > 0
+> xautoclaim s g c3 100 0 count x
+-ERR COUNT must be > 0
+> xautoclaim s g c3 100 0 foo
+-ERR syntax error
+> xautoclaim s g c3 x 0
+-ERR Invalid min-idle-time argument for XAUTOCLAIM
+> xautoclaim s g c3 100 abc
+-ERR Invalid stream ID specified as stream command argument
+> xautoclaim s g c3 100
+-ERR wrong number of arguments for 'xautoclaim' command
+> xautoclaim s nog c3 100 0
+-NOGROUP No such key 's' or consumer group 'nog'
+> xautoclaim nokey g c3 100 0
+-NOGROUP No such key 'nokey' or consumer group 'g'
+> xdel s 2-1 4-1
+:2
+> xautoclaim s g c4 100 0
+["0-0", [], ["2-1", "4-1"]]
+> xautoclaim s g c4 100 0
+["0-0", [], []]
+> xpending s g - + 10 @t
+[["1-1", "c2", :_, :2], ["3-1", "c2", :_, :2], ["5-1", "c2", :_, :2]]
+> xinfo consumers s g @t
+[["name", "c1", "pending", :0, "idle", _, "inactive", _], ["name", "c2", "pending", :3, "idle", _, "inactive", _], ["name", "c3", "pending", :0, "idle", _, "inactive", :-1], ["name", "c4", "pending", :0, "idle", _, "inactive", :-1]]
+> xinfo groups s
+[["name", "g", "consumers", :4, "pending", :3, "last-delivered-id", "5-1", "entries-read", :5, "lag", :0]]
+## lag
+> xadd s 1-1 a 1
+"1-1"
+> xadd s 2-1 a 2
+"2-1"
+> xadd s 3-1 a 3
+"3-1"
+> xadd s 4-1 a 4
+"4-1"
+> xgroup create s g 0
++OK
+> xgroup create s h $
++OK
+> xgroup create s i 2-1
++OK
+> xgroup create s j 0 entriesread 1
++OK
+> xinfo groups s
+[["name", "g", "consumers", :0, "pending", :0, "last-delivered-id", "0-0", "entries-read", (nil), "lag", :4], ["name", "h", "consumers", :0, "pending", :0, "last-delivered-id", "4-1", "entries-read", (nil), "lag", :0], ["name", "i", "consumers", :0, "pending", :0, "last-delivered-id", "2-1", "entries-read", (nil), "lag", (nil)], ["name", "j", "consumers", :0, "pending", :0, "last-delivered-id", "0-0", "entries-read", :1, "lag", :4]]
+> xreadgroup group g c count 1 streams s >
+[["s", [["1-1", ["a", "1"]]]]]
+> xinfo groups s
+[["name", "g", "consumers", :1, "pending", :1, "last-delivered-id", "1-1", "entries-read", :1, "lag", :3], ["name", "h", "consumers", :0, "pending", :0, "last-delivered-id", "4-1", "entries-read", (nil), "lag", :0], ["name", "i", "consumers", :0, "pending", :0, "last-delivered-id", "2-1", "entries-read", (nil), "lag", (nil)], ["name", "j", "consumers", :0, "pending", :0, "last-delivered-id", "0-0", "entries-read", :1, "lag", :4]]
+> xdel s 3-1
+:1
+> xinfo groups s
+[["name", "g", "consumers", :1, "pending", :1, "last-delivered-id", "1-1", "entries-read", :1, "lag", (nil)], ["name", "h", "consumers", :0, "pending", :0, "last-delivered-id", "4-1", "entries-read", (nil), "lag", :0], ["name", "i", "consumers", :0, "pending", :0, "last-delivered-id", "2-1", "entries-read", (nil), "lag", (nil)], ["name", "j", "consumers", :0, "pending", :0, "last-delivered-id", "0-0", "entries-read", :1, "lag", (nil)]]
+> xreadgroup group g c streams s >
+[["s", [["2-1", ["a", "2"]], ["4-1", ["a", "4"]]]]]
+> xinfo groups s
+[["name", "g", "consumers", :1, "pending", :3, "last-delivered-id", "4-1", "entries-read", :4, "lag", :0], ["name", "h", "consumers", :0, "pending", :0, "last-delivered-id", "4-1", "entries-read", (nil), "lag", :0], ["name", "i", "consumers", :0, "pending", :0, "last-delivered-id", "2-1", "entries-read", (nil), "lag", (nil)], ["name", "j", "consumers", :0, "pending", :0, "last-delivered-id", "0-0", "entries-read", :1, "lag", (nil)]]
+> xadd s 5-1 a 5
+"5-1"
+> xinfo groups s
+[["name", "g", "consumers", :1, "pending", :3, "last-delivered-id", "4-1", "entries-read", :4, "lag", :1], ["name", "h", "consumers", :0, "pending", :0, "last-delivered-id", "4-1", "entries-read", (nil), "lag", (nil)], ["name", "i", "consumers", :0, "pending", :0, "last-delivered-id", "2-1", "entries-read", (nil), "lag", (nil)], ["name", "j", "consumers", :0, "pending", :0, "last-delivered-id", "0-0", "entries-read", :1, "lag", (nil)]]
+> xdel s 1-1
+:1
+> xinfo groups s
+[["name", "g", "consumers", :1, "pending", :3, "last-delivered-id", "4-1", "entries-read", :4, "lag", :1], ["name", "h", "consumers", :0, "pending", :0, "last-delivered-id", "4-1", "entries-read", (nil), "lag", (nil)], ["name", "i", "consumers", :0, "pending", :0, "last-delivered-id", "2-1", "entries-read", (nil), "lag", (nil)], ["name", "j", "consumers", :0, "pending", :0, "last-delivered-id", "0-0", "entries-read", :1, "lag", (nil)]]
+> xreadgroup group h c streams s >
+[["s", [["5-1", ["a", "5"]]]]]
+> xinfo groups s
+[["name", "g", "consumers", :1, "pending", :3, "last-delivered-id", "4-1", "entries-read", :4, "lag", :1], ["name", "h", "consumers", :1, "pending", :1, "last-delivered-id", "5-1", "entries-read", :5, "lag", :0], ["name", "i", "consumers", :0, "pending", :0, "last-delivered-id", "2-1", "entries-read", (nil), "lag", (nil)], ["name", "j", "consumers", :0, "pending", :0, "last-delivered-id", "0-0", "entries-read", :1, "lag", (nil)]]
+> xdel s 5-1
+:1
+> xdel s 4-1
+:1
+> xdel s 2-1
+:1
+> xinfo groups s
+[["name", "g", "consumers", :1, "pending", :3, "last-delivered-id", "4-1", "entries-read", :4, "lag", :0], ["name", "h", "consumers", :1, "pending", :1, "last-delivered-id", "5-1", "entries-read", :5, "lag", :0], ["name", "i", "consumers", :0, "pending", :0, "last-delivered-id", "2-1", "entries-read", (nil), "lag", :0], ["name", "j", "consumers", :0, "pending", :0, "last-delivered-id", "0-0", "entries-read", :1, "lag", :0]]
+> xadd s 6-1 a 6
+"6-1"
+> xinfo groups s
+[["name", "g", "consumers", :1, "pending", :3, "last-delivered-id", "4-1", "entries-read", :4, "lag", :1], ["name", "h", "consumers", :1, "pending", :1, "last-delivered-id", "5-1", "entries-read", :5, "lag", :1], ["name", "i", "consumers", :0, "pending", :0, "last-delivered-id", "2-1", "entries-read", (nil), "lag", :1], ["name", "j", "consumers", :0, "pending", :0, "last-delivered-id", "0-0", "entries-read", :1, "lag", :1]]
+> xinfo stream s
+["length", :1, "radix-tree-keys", :1, "radix-tree-nodes", :2, "last-generated-id", "6-1", "max-deleted-entry-id", "5-1", "entries-added", :6, "recorded-first-entry-id", "6-1", "groups", :4, "first-entry", ["6-1", ["a", "6"]], "last-entry", ["6-1", ["a", "6"]]]
+> xtrim s maxlen 0
+:1
+> xinfo groups s
+[["name", "g", "consumers", :1, "pending", :3, "last-delivered-id", "4-1", "entries-read", :4, "lag", :0], ["name", "h", "consumers", :1, "pending", :1, "last-delivered-id", "5-1", "entries-read", :5, "lag", :0], ["name", "i", "consumers", :0, "pending", :0, "last-delivered-id", "2-1", "entries-read", (nil), "lag", :0], ["name", "j", "consumers", :0, "pending", :0, "last-delivered-id", "0-0", "entries-read", :1, "lag", :0]]
+> xinfo stream s
+["length", :0, "radix-tree-keys", :0, "radix-tree-nodes", :1, "last-generated-id", "6-1", "max-deleted-entry-id", "5-1", "entries-added", :6, "recorded-first-entry-id", "0-0", "groups", :4, "first-entry", (nil), "last-entry", (nil)]
+> xadd s 7-1 a 7
+"7-1"
+> xinfo groups s
+[["name", "g", "consumers", :1, "pending", :3, "last-delivered-id", "4-1", "entries-read", :4, "lag", :1], ["name", "h", "consumers", :1, "pending", :1, "last-delivered-id", "5-1", "entries-read", :5, "lag", :1], ["name", "i", "consumers", :0, "pending", :0, "last-delivered-id", "2-1", "entries-read", (nil), "lag", :1], ["name", "j", "consumers", :0, "pending", :0, "last-delivered-id", "0-0", "entries-read", :1, "lag", :1]]
+> xgroup setid s g 0
++OK
+> xinfo groups s
+[["name", "g", "consumers", :1, "pending", :3, "last-delivered-id", "0-0", "entries-read", (nil), "lag", :1], ["name", "h", "consumers", :1, "pending", :1, "last-delivered-id", "5-1", "entries-read", :5, "lag", :1], ["name", "i", "consumers", :0, "pending", :0, "last-delivered-id", "2-1", "entries-read", (nil), "lag", :1], ["name", "j", "consumers", :0, "pending", :0, "last-delivered-id", "0-0", "entries-read", :1, "lag", :1]]
+> xgroup setid s g 0 entriesread 0
++OK
+> xinfo groups s
+[["name", "g", "consumers", :1, "pending", :3, "last-delivered-id", "0-0", "entries-read", :0, "lag", :1], ["name", "h", "consumers", :1, "pending", :1, "last-delivered-id", "5-1", "entries-read", :5, "lag", :1], ["name", "i", "consumers", :0, "pending", :0, "last-delivered-id", "2-1", "entries-read", (nil), "lag", :1], ["name", "j", "consumers", :0, "pending", :0, "last-delivered-id", "0-0", "entries-read", :1, "lag", :1]]
+> xgroup setid s g $
++OK
+> xinfo groups s
+[["name", "g", "consumers", :1, "pending", :3, "last-delivered-id", "7-1", "entries-read", (nil), "lag", :0], ["name", "h", "consumers", :1, "pending", :1, "last-delivered-id", "5-1", "entries-read", :5, "lag", :1], ["name", "i", "consumers", :0, "pending", :0, "last-delivered-id", "2-1", "entries-read", (nil), "lag", :1], ["name", "j", "consumers", :0, "pending", :0, "last-delivered-id", "0-0", "entries-read", :1, "lag", :1]]

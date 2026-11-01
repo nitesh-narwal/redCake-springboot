@@ -1,6 +1,7 @@
 package me.niteshh.redcake.store;
 
 import me.niteshh.redcake.json.JsonDocument;
+import me.niteshh.redcake.stream.Stream;
 import me.niteshh.redcake.vector.VectorSet;
 
 import java.util.Collection;
@@ -37,6 +38,7 @@ public final class MemoryEstimator {
             case ZSet zset -> 64 + zset.size() * ZSET_MEMBER;
             case VectorSet vectors -> 64 + vectors.estimatedBytes(); // maintained incrementally: O(1)
             case JsonDocument json -> json.estimatedBytes(); // likewise
+            case Stream stream -> stream.estimatedBytes(); // likewise
             case Collection<?> collection -> 48 + collection.size()
                     * (value instanceof java.util.Set ? SET_MEMBER : LIST_ELEMENT);
             default -> 0;
@@ -52,6 +54,8 @@ public final class MemoryEstimator {
             case VectorSet vectors -> vectors.size() == 0 && !vectors.isRestoring();
             // an empty object or array is a perfectly good document; only a deleted or not yet written one goes
             case JsonDocument json -> json.isDeleted() || json.isUnset();
+            // an empty stream is still a stream: it keeps its last id and its consumer groups
+            case Stream ignored -> false;
             case Collection<?> collection -> collection.isEmpty();
             default -> false;
         };

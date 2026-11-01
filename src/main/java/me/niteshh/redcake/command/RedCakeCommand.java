@@ -68,6 +68,18 @@ public interface RedCakeCommand {
     }
 
     /**
+     * Asks whether this command line wants to <em>wait</em> for data when there is none yet (a stream read with
+     * {@code BLOCK}). Runs on the client's own thread, before the command is executed, and must not change data.
+     *
+     * @param command full command including its name, as received from the client
+     * @return what to wait for, or {@code null} if the command does not block (the default, and what a command
+     *         returns for a line that is malformed - {@link #execute} reports the error)
+     */
+    default BlockingRequest blocking(List<String> command) {
+        return null;
+    }
+
+    /**
      * Rewrites the command into a deterministic form <em>before</em> it is
      * executed, logged and replicated. Relative times ({@code EX 10},
      * {@code EXPIRE k 10}) become absolute ({@code PXAT <ms>}) using one single

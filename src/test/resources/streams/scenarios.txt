@@ -1,0 +1,477 @@
+## xadd-errors
+xadd
+xadd k
+xadd k * a
+xadd k 0-0 a 1
+xadd k abc a 1
+xadd k 1-1 a 1
+xadd k 1-1 a 1
+xadd k 1-0 a 1
+xadd k 1-* a 1
+xadd k 1-* a 1
+xadd k 0-* a 1
+xadd k maxlen abc 5-0 a 1
+xadd k maxlen -1 5-0 a 1
+xadd k maxlen 5 minid 1 5-0 a 1
+xadd k limit 5 5-0 a 1
+xadd k maxlen = 5 limit 3 7-0 a 1
+xadd nokey nomkstream 1-1 a 1
+xadd k foo 8-0 a 1
+xadd k 9-0 a
+xadd k 9-0 a 1 b
+xadd k 18446744073709551615-18446744073709551615 a 1
+xadd k 18446744073709551615-18446744073709551615 a 1
+xadd k * a 1
+xlen k
+xlen nokey
+xlen
+set str v
+xlen str
+xadd str 1-1 a 1
+xrange str - +
+## xadd-ids
+xadd k 5-5 a 1
+xadd k 5-* a 2
+xadd k 5-* a 3
+xadd k 6-* a 4
+xadd k 6 a 5
+xadd k 7 a 6
+xadd k 007-8 a 7
+xrange k - +
+xrange k 5 6
+xrange k 5-6 6-1
+xrange k (5-6 6-1
+xrange k (5-6 (6-1
+xrange k - + count 2
+xrange k - + count 0
+xrange k - + count -3
+xrange k - + count 100
+xrevrange k + - count 2
+xrevrange k + -
+xrevrange k 6 5
+xrevrange k (6-1 (5-5
+xrange k + -
+xrange nokey - +
+xrange nokey - + count 0
+xrange k ( +
+xrange k (18446744073709551615-18446744073709551615 +
+xrange k - (0-0
+xrange k a b
+xrange k - + foo
+xrange k - + count
+xrange k - + count x
+xlen k
+## trim
+xadd t 1-1 a 1
+xadd t 2-1 a 2
+xadd t 3-1 a 3
+xadd t 4-1 a 4
+xadd t 5-1 a 5
+xadd t 6-1 a 6
+xtrim t maxlen 4
+xrange t - +
+xtrim t maxlen = 4
+xtrim t maxlen 0 limit 2
+xrange t - +
+xtrim t minid 5-0
+xrange t - +
+xtrim t minid 7
+xlen t
+xinfo stream t
+xtrim t
+xtrim t maxlen
+xtrim t foo 1
+xtrim t maxlen x
+xtrim t maxlen -1
+xtrim t minid abc
+xtrim t maxlen 1 minid 2
+xtrim nokey maxlen 1
+xtrim t limit 5
+xtrim t maxlen 5 limit 5
+xadd t maxlen 2 8-1 a 8
+xadd t maxlen 2 9-1 a 9
+xrange t - +
+xadd t minid 9-1 10-1 a 10
+xrange t - +
+xadd t maxlen 0 11-1 a 11
+xlen t
+xinfo stream t
+## xdel-setid
+xadd d 1-1 a 1
+xadd d 2-1 a 2
+xadd d 3-1 a 3
+xdel d 2-1
+xdel d 2-1
+xdel d 9-9 1-1
+xinfo stream d
+xdel d abc
+xdel d
+xdel nokey 1-1
+xdel nokey abc
+xdel d 3-1
+xinfo stream d
+xlen d
+xadd d 4-1 a 4
+xinfo stream d
+xsetid d 4-1
+xsetid d 3-1
+xsetid d 10-0 entriesadded 100
+xinfo stream d
+xsetid d 10-0 entriesadded 0
+xsetid d 10-0 entriesadded -1
+xsetid d 10-0 maxdeletedid 11-0
+xsetid d 10-0 maxdeletedid 3-0
+xsetid d 10-0 maxdeletedid abc
+xsetid d 10-0 foo
+xsetid d 10-0 entriesadded
+xsetid nokey 1-1
+xsetid d abc
+xsetid d
+xsetid d 9-0
+xinfo stream d
+## xread
+xadd a 1-1 f v1
+xadd a 2-1 f v2 g w2
+xadd a 3-1 f v3
+xadd b 1-1 x y
+set str v
+xread streams a 0
+xread streams a 0-0
+xread streams a 1-1
+xread streams a 3-1
+xread streams a 99
+xread count 2 streams a 0
+xread count 0 streams a 0
+xread count -1 streams a 0
+xread streams a b 0 0
+xread streams a b 3-1 0
+xread streams a b 3-1 1-1
+xread streams a nokey 0 0
+xread streams nokey 0
+xread streams a $
+xread streams a +
+xread streams b +
+xread streams nokey +
+xread streams a >
+xread streams str 0
+xread streams a str 0 0
+xread streams a str 3-1 0
+xread streams a abc
+xread streams a
+xread streams a b 0
+xread streams
+xread
+xread foo
+xread count
+xread count x streams a 0
+xread block x streams a 0
+xread block -1 streams a 0
+xread block 1 streams a 3-1
+xread block 0 streams a 0
+xread group g c streams a 0
+xread noack streams a 0
+xread streams a 1
+xread streams a 1-
+xread streams a -
+xread streams a 18446744073709551615-18446744073709551615
+xread streams a 0 0
+## group-admin
+xadd s 1-1 a 1
+xadd s 2-1 a 2
+xadd s 3-1 a 3
+xgroup create s g1 0
+xgroup create s g1 0
+xgroup create s g2 $
+xgroup create s g3 2-1
+xgroup create s g4 0 entriesread 0
+xgroup create s g5 0 entriesread 2
+xgroup create s g6 0 entriesread -1
+xgroup create s g7 0 entriesread -2
+xgroup create s g8 0 entriesread x
+xgroup create s g9 0 entriesread
+xgroup create s g0 0 foo
+xgroup create nokey g 0
+xgroup create nokey g 0 mkstream
+xgroup create nokey2 g $ mkstream
+xinfo stream nokey full @t
+xinfo stream nokey2
+xgroup create s gz abc
+xgroup create s gz -
+xgroup create s gz +
+xgroup create str g 0
+xgroup create s
+xgroup create s g
+xgroup
+xgroup foo
+xgroup foo s g
+xgroup help
+xgroup setid s g1 2-1
+xgroup setid s g1 $
+xgroup setid s g1 0 entriesread 1
+xgroup setid s g1 +
+xgroup setid s g1 -
+xgroup setid s nog 0
+xgroup setid nokey9 g 0
+xgroup setid s g1 abc
+xgroup setid s g1
+xgroup setid s g1 0 mkstream
+xgroup setid s g1 0 entriesread -5
+xgroup createconsumer s g1 c1
+xgroup createconsumer s g1 c1
+xgroup createconsumer s nog c1
+xgroup createconsumer nokey9 g c
+xgroup createconsumer s g1
+xgroup createconsumer s g1 c extra
+xgroup delconsumer s g1 c1
+xgroup delconsumer s g1 c1
+xgroup delconsumer s nog c1
+xgroup delconsumer s g1
+xgroup destroy s g1
+xgroup destroy s g1
+xgroup destroy nokey9 g
+xgroup destroy s
+xgroup destroy s g extra
+xinfo groups s
+xinfo groups nokey9
+xinfo groups
+xinfo groups str
+xinfo consumers s g2 @t
+xinfo consumers s nog @t
+xinfo consumers nokey9 g @t
+xinfo consumers s @t
+xinfo help
+xinfo foo
+xinfo foo s
+xinfo stream
+xinfo stream s foo
+xinfo stream s full @t
+xinfo stream s full count 1 @t
+xinfo stream s full count 0 @t
+xinfo stream s full count x @t
+xinfo stream s full count @t
+xinfo stream s count 1
+xinfo stream str
+## readgroup
+xadd s 1-1 a 1
+xadd s 2-1 a 2
+xadd s 3-1 a 3
+xadd s 4-1 a 4
+xadd s 5-1 a 5
+xgroup create s g 0
+xreadgroup group g c1 count 2 streams s >
+xpending s g
+xpending s g - + 10 @t
+xpending s g - + 10 c1 @t
+xpending s g - + 10 c2 @t
+xreadgroup group g c2 count 1 streams s >
+xreadgroup group g c1 streams s 0
+xreadgroup group g c1 streams s 1-1
+xreadgroup group g c1 streams s 2-1
+xreadgroup group g c1 streams s 9-9
+xreadgroup group g c2 streams s 0
+xreadgroup group g c3 streams s 0
+xpending s g - + 10 @t
+xpending s g
+xinfo groups s
+xinfo consumers s g @t
+xreadgroup group g c3 streams s >
+xreadgroup group g c3 streams s >
+xpending s g
+xreadgroup group g c3 noack streams s >
+xinfo groups s
+xadd s 6-1 a 6
+xadd s 7-1 a 7
+xreadgroup group g c3 noack count 1 streams s >
+xpending s g - + 10 @t
+xinfo groups s
+xinfo stream s full @t
+xreadgroup group g c3 count 0 streams s >
+xreadgroup group g c3 streams s >
+xack s g 1-1
+xack s g 1-1
+xack s g 2-1 3-1 9-9
+xack s nog 1-1
+xack nokey g 1-1
+xack s g abc
+xack s g 4-1 abc
+xack s g
+xack s
+xpending s g
+xreadgroup group g c3 streams s >
+xreadgroup group nog c3 streams s >
+xreadgroup group g c3 streams nokey >
+xreadgroup group g c3 streams s $
+xreadgroup group g c3 streams s +
+xreadgroup group g c3 streams s abc
+xreadgroup group g c3 streams s
+xreadgroup group g c3 streams s > >
+xreadgroup streams s >
+xreadgroup group g streams s >
+xreadgroup group g c3
+xreadgroup group g c3 foo
+xreadgroup count x group g c3 streams s >
+xreadgroup group g c3 block x streams s >
+xreadgroup group g c3 block 1 streams s >
+xreadgroup group g c3 block 0 streams s 0
+xreadgroup noack group g c3 streams s 0
+xread group g c3 streams s 0
+xread noack streams s 0
+## readgroup-multi
+xadd a 1-1 f 1
+xadd a 2-1 f 2
+xadd b 1-1 f 1
+xgroup create a g 0
+xgroup create b g 0
+xgroup create b h 0
+xreadgroup group g c streams a b > >
+xreadgroup group g c streams a b > >
+xadd a 3-1 f 3
+xreadgroup group g c streams a b > >
+xreadgroup group g c streams a b 0 0
+xreadgroup group g c streams a b 0 >
+xreadgroup group h c streams a b > >
+xreadgroup group g c streams a b > 0
+set str v
+xreadgroup group g c streams a str > >
+xreadgroup group g c streams str a > >
+xinfo groups a
+xinfo groups b
+## pending-claim
+xadd s 1-1 a 1
+xadd s 2-1 a 2
+xadd s 3-1 a 3
+xadd s 4-1 a 4
+xgroup create s g 0
+xreadgroup group g c1 streams s >
+sleep 0.4
+xpending s g - + 10 idle 100 @t
+xpending s g - + 10 idle 100000 @t
+xpending s g idle 100 - + 10 @t
+xpending s g idle 100 - + 10 c1 @t
+xpending s g - + 0 @t
+xpending s g - + -1 @t
+xpending s g (1-1 + 10 @t
+xpending s g - (3-1 10 @t
+xpending s g (0-0 + 10 @t
+xpending s g - + x @t
+xpending s g idle x - + 10 @t
+xpending s g idle 100 @t
+xpending s g idle 100 - + @t
+xpending s g - + @t
+xpending s g - + 10 c1 extra @t
+xpending s g 1 3 10 @t
+xpending s g 3 1 10 @t
+xpending s nog - + 10 @t
+xpending nokey g - + 10 @t
+xpending nokey g
+xpending s nog
+xpending s
+xpending
+xpending s g a b 5 @t
+xclaim s g c2 0 1-1
+xpending s g - + 10 @t
+xclaim s g c2 100000 2-1
+xclaim s g c2 100 2-1 3-1 justid
+xpending s g - + 10 @t
+xclaim s g c3 0 4-1 retrycount 10
+xclaim s g c3 0 4-1 retrycount 10 justid
+xclaim s g c3 0 4-1 idle 100000 justid
+xclaim s g c3 0 4-1 time 1 justid
+xclaim s g c3 0 9-1
+xclaim s g c3 0 9-1 force
+xclaim s g c3 0 9-1 force justid
+xclaim s g c3 0 3-1 lastid 9-9
+xinfo groups s
+xclaim s g c3 0 3-1 lastid abc
+xclaim s g c3 0 3-1 foo
+xclaim s g c3 0 3-1 idle
+xclaim s g c3 0 3-1 idle x
+xclaim s g c3 0 3-1 time x
+xclaim s g c3 0 3-1 retrycount x
+xclaim s g c3 x 3-1
+xclaim s g c3 -5 3-1
+xclaim s g c3 0
+xclaim s g c4 0 force
+xclaim s g c3
+xclaim s nog c3 0 3-1
+xclaim nokey g c3 0 3-1
+xclaim s g c3 0 abc
+xdel s 3-1
+xclaim s g c3 0 3-1 1-1 justid
+xpending s g - + 10 @t
+xinfo consumers s g @t
+## autoclaim
+xadd s 1-1 a 1
+xadd s 2-1 a 2
+xadd s 3-1 a 3
+xadd s 4-1 a 4
+xadd s 5-1 a 5
+xgroup create s g 0
+xreadgroup group g c1 streams s >
+sleep 0.3
+xautoclaim s g c2 100 0
+xpending s g - + 10 @t
+xautoclaim s g c2 100 0 count 2
+xautoclaim s g c3 100 0 count 2
+xautoclaim s g c3 100 0 count 2 justid
+xautoclaim s g c3 100 3-1 count 1
+xautoclaim s g c3 100 (3-1 count 1
+xautoclaim s g c3 100000 0
+xautoclaim s g c3 100 -
+xautoclaim s g c3 100 +
+xautoclaim s g c3 100 (0-0
+xautoclaim s g c3 100 0 count 0
+xautoclaim s g c3 100 0 count -1
+xautoclaim s g c3 100 0 count x
+xautoclaim s g c3 100 0 foo
+xautoclaim s g c3 x 0
+xautoclaim s g c3 100 abc
+xautoclaim s g c3 100
+xautoclaim s nog c3 100 0
+xautoclaim nokey g c3 100 0
+xdel s 2-1 4-1
+xautoclaim s g c4 100 0
+xautoclaim s g c4 100 0
+xpending s g - + 10 @t
+xinfo consumers s g @t
+xinfo groups s
+## lag
+xadd s 1-1 a 1
+xadd s 2-1 a 2
+xadd s 3-1 a 3
+xadd s 4-1 a 4
+xgroup create s g 0
+xgroup create s h $
+xgroup create s i 2-1
+xgroup create s j 0 entriesread 1
+xinfo groups s
+xreadgroup group g c count 1 streams s >
+xinfo groups s
+xdel s 3-1
+xinfo groups s
+xreadgroup group g c streams s >
+xinfo groups s
+xadd s 5-1 a 5
+xinfo groups s
+xdel s 1-1
+xinfo groups s
+xreadgroup group h c streams s >
+xinfo groups s
+xdel s 5-1
+xdel s 4-1
+xdel s 2-1
+xinfo groups s
+xadd s 6-1 a 6
+xinfo groups s
+xinfo stream s
+xtrim s maxlen 0
+xinfo groups s
+xinfo stream s
+xadd s 7-1 a 7
+xinfo groups s
+xgroup setid s g 0
+xinfo groups s
+xgroup setid s g 0 entriesread 0
+xinfo groups s
+xgroup setid s g $
+xinfo groups s

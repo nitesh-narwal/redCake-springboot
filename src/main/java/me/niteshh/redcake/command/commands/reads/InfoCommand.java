@@ -145,6 +145,7 @@ public class InfoCommand implements RedCakeCommand {
     private String clientsInfo() {
         return "# Clients\r\n"
                 + "connected_clients:" + serverStats.connectedClients() + "\r\n"
+                + "blocked_clients:" + store.waiters().waiting() + "\r\n"
                 + "rejected_connections:" + serverStats.rejectedConnections() + "\r\n"
                 + "\r\n";
     }

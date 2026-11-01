@@ -62,7 +62,8 @@ public final class TestSupport {
         return List.of(
                 new HashCommands(store), new ListCommands(store),
                 new SetCommands(store), new SortedSetCommands(store),
-                new StringExtraCommands(store), new VectorCommands(store), new JsonCommands(store));
+                new StringExtraCommands(store), new VectorCommands(store), new JsonCommands(store),
+                new StreamCommands(store), new StreamGroupCommands(store));
     }
 
     /** Every command RedCake ships that needs no server context, with a standalone INFO. */

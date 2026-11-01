@@ -93,7 +93,7 @@ public class JsonCommands implements CommandProvider {
         );
     }
 
-    // ------------------------------------------------------------------------------------------------ plumbing
+    // plumbing
 
     /** A problem with the JSON text or the path is an error reply, not a crash. */
     private static Function<List<String>, RespValue> guarded(Function<List<String>, RespValue> body) {
@@ -220,7 +220,7 @@ public class JsonCommands implements CommandProvider {
         return new JsonException("Path '" + path.text() + "' does not exist");
     }
 
-    // ------------------------------------------------------------------------------------------- set / get / del
+    // set / get / del
 
     /** {@code JSON.SET key path value [NX | XX]} */
     private RespValue set(List<String> a) {
@@ -373,7 +373,7 @@ public class JsonCommands implements CommandProvider {
         });
     }
 
-    // ------------------------------------------------------------------------------------------------- numbers
+    // numbers
 
     /** {@code JSON.NUMINCRBY key path number}, {@code JSON.NUMMULTBY key path number} */
     private RespValue number(List<String> a, Arithmetic operation) {
@@ -403,7 +403,7 @@ public class JsonCommands implements CommandProvider {
                 ? new BulkString(value.toString()) : new IntegerValue((Boolean) value ? 1 : 0));
     }
 
-    // ------------------------------------------------------------------------------------------------- strings
+    // strings
 
     /** {@code JSON.STRAPPEND key [path] value} */
     private RespValue strAppend(List<String> a) {
@@ -522,7 +522,7 @@ public class JsonCommands implements CommandProvider {
         return perMatch(path, result, "array", JsonCommands::integer);
     }
 
-    // ------------------------------------------------------------------------------------------------- objects
+    // objects
 
     /** {@code JSON.OBJKEYS key [path]} */
     private RespValue objKeys(List<String> a) {
