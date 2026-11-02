@@ -999,12 +999,17 @@ public class ClientHandler {
                 PreparedWork.set(prepared);
             }
             RespValue response;
-            List<List<String>> effects;
-            Propagation.begin();
+            List<List<String>> effects = null;
+            boolean reports = known.reportsEffects(); // only these pay for the thread-local bookkeeping
+            if (reports) {
+                Propagation.begin();
+            }
             try {
                 response = commandHandler.handle(normalized);
             } finally {
-                effects = Propagation.end();
+                if (reports) {
+                    effects = Propagation.end();
+                }
             }
 
             // A command that is not repeatable (XREADGROUP, XAUTOCLAIM) says what it did, and that is what replicas

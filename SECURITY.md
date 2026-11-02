@@ -13,7 +13,7 @@ accidental exposure and untrusted *protocol input*, not against a hostile authen
 |---|---|
 | Accidentally exposing an open database | Binds to loopback by default; **protected mode** refuses a non-loopback bind unless an API key/ACL is set or `--allow-insecure` is given |
 | Credential guessing | Constant-time compare on SHA-256 digests (no length leak); growing delay per failure; per-IP lockout after 10 failures for 60 s; unauthenticated connections time out after 15 s |
-| Over-privileged clients | ACL users with `admin` / `readwrite` / `readonly` roles (`--acl-file`); admin-only: `FLUSHALL`, `FLUSHDB`, `CONFIG`, `SLOWLOG`, `SHUTDOWN`, `REPLICAOF`, `FAILOVER`, `PSYNC`, `REPLCONF`, `MONITOR`, `CLIENT KILL`, `ACL LIST` / `ACL USERS`, `BGREWRITEAOF`, `VRESTORE` |
+| Over-privileged clients | ACL users with `admin` / `readwrite` / `readonly` roles (`--acl-file`); admin-only: `FLUSHALL`, `FLUSHDB`, `CONFIG`, `SLOWLOG`, `SHUTDOWN`, `REPLICAOF`, `FAILOVER`, `PSYNC`, `REPLCONF`, `MONITOR`, `CLIENT KILL`, `ACL LIST` / `ACL USERS`, `BGREWRITEAOF`, `VRESTORE`, `XRESTORE` |
 | Eavesdropping / tampering | TLS for clients and replication (`--tls-keystore`), optional mutual TLS (`--tls-client-auth`), host-name verification on the replica → primary link |
 | Malformed or hostile protocol input | Bounded parser (1024 args, 1 MiB per bulk string, 8 MiB per command, 64-byte header lines); protocol errors close the connection; randomised fuzz test in CI |
 | Memory exhaustion | `--maxmemory` + eviction policies, `--max-clients`, bounded replica queues (64 MiB), idle timeouts |
@@ -22,6 +22,8 @@ accidental exposure and untrusted *protocol input*, not against a hostile authen
 | Hostile JSON text | A strict parser: nesting limited to 128 levels (no stack overflow), UTF-8 and `\u` escapes validated, numbers out of range refused, no recursion beyond the nesting; the text is bounded by the parser's 1 MiB per argument / 8 MiB per command (ADR 0007) |
 | Expensive JSONPath expressions | A path is limited to 8,192 bytes and 32 nested filter levels, and one evaluation - nested filters included - may visit at most 10 million nodes; `$..*..*..*..*` and nested filters are abandoned with an error instead of holding a thread and the key's lock |
 | A JSON document grown beyond what a command can carry | It grows only through commands that each fit the parser's limits; a snapshot (rewrite, full sync) rebuilds it from pieces that do too, so a large document can never make replication or the AOF unreadable. A string may not exceed 256 MiB; the total is bounded by `--maxmemory` |
+| Resource abuse through streams | Every input is bounded by the parser (1,024 words, 1 MiB per value, 8 MiB per command), so an entry has at most about 500 fields; a stream and its pending lists count against `--maxmemory` (`XADD`, `XGROUP`, `XCLAIM` are refused with `-OOM`; `XDEL`, `XTRIM`, `XACK` are not); `XAUTOCLAIM` looks at no more than ten times its `COUNT` of pending entries per call; a waiting `XREAD` / `XREADGROUP` is a parked virtual thread bounded by `--max-clients`, and one whose client hung up is released within 200 ms instead of being handed entries later (ADR 0008) |
+| Crafted `XRESTORE` (the command a snapshot uses to put a pending entry back) | admin-only, like `VRESTORE`; it needs an existing stream and group, an entry id and two non-negative numbers, and changes nothing else |
 | Slow-client (slowloris) | `--timeout`, 15 s authentication deadline |
 | Secret leakage | API key via `REDCAKE_API_KEY` / `--api-key-file`; TLS passwords via files/env; ACL file stores only SHA-256 digests; `CONFIG GET` never returns secrets; `AUTH` is never written to the slow log or `MONITOR` |
 | Log injection | Error text is stripped of CR/LF; client data is never logged |
@@ -38,6 +40,10 @@ accidental exposure and untrusted *protocol input*, not against a hostile authen
 * The cost of reading a JSON document is chosen by the client: `JSON.GET key` of a huge document, or a path such as `$..*`,
   serializes or walks all of it (the path budget bounds the work, there is no quota), and a change by path runs under the
   key's lock. Like `VSIM`, it is open to the `readonly` role.
+* The cost of reading a stream is chosen by the client: `XRANGE key - +`, `XINFO STREAM key FULL COUNT 0` and an `XREADGROUP`
+  without `COUNT` build a reply as large as the stream (use `COUNT`), and `XREAD` / `XRANGE` are open to the `readonly` role. A
+  consumer that reads and never acknowledges makes its pending list grow without bound (it is counted by `--maxmemory`, and
+  `XGROUP DELCONSUMER` or `XAUTOCLAIM` end it). Delivery is at least once: a slow worker's entry can be processed twice.
 * The cost of a similarity search is chosen by the client: `VSIM` with `EF` / `COUNT` up to 10,000, or `TRUTH` (an exact scan of the
   whole set), is allowed to the `readonly` role, and there is no per-command CPU quota. Keep untrusted clients out with network
   controls and `--max-clients`.

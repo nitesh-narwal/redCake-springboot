@@ -133,8 +133,10 @@ class DifferentialRedisTest {
                     "GET h", "HGET s f", "LPUSH h x", "SADD l x", "ZADD s 1 m", "INCR h", "APPEND l x", "STRLEN h",
                     "LRANGE s 0 -1", "SMEMBERS z", "ZRANGE st 0 -1", "TYPE s", "TYPE h", "TYPE l", "TYPE st", "TYPE z",
                     "MGET s h l", "SET h overwrite", "TYPE h", "DEL l", "EXISTS l"},
+            // SELECT 1 is left out on purpose: Redis switches to database 1, RedCake has exactly one database (README, "RedCake and
+            // Redis") and refuses it. Everything else here was found identical when this ran against Redis 7.4.2.
             new String[]{"misc",
-                    "PING", "PING hello", "ECHO hi", "ECHO", "SELECT 0", "SELECT 1", "NOSUCHCOMMAND", "ECHO a b"}
+                    "PING", "PING hello", "ECHO hi", "ECHO", "SELECT 0", "NOSUCHCOMMAND", "ECHO a b"}
     );
 
     @Test

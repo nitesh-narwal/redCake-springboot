@@ -687,3 +687,59 @@ throughout.
 2. A secondary index over a few JSON paths (status, tags) so that "all records with status failed" does not need a scan.
 3. Use the path engine for `VSIM ... FILTER` on vector-set attributes.
 4. `JSON.MSET` with a two-phase check.
+
+## 16. Progress log — streams pass (2026-11-02)
+
+### Added
+Streams and consumer groups ("Pub/Sub is not durable and is unsuitable for reliable agent jobs"), designed in
+`docs/adr/0008-streams-and-consumer-groups.md`: the `stream` package (`Stream`, `EntryLog` with blocks of packed entries,
+`StreamId`, `ConsumerGroup`, `Consumer`, `Pending`), `StreamCommands` and `StreamGroupCommands` (the 15 Redis Streams commands and
+the internal `XRESTORE`), `ValueType.STREAM`, snapshot support in `SnapshotEntry`, `MemoryEstimator` support, **blocking reads**
+(`RedCakeCommand.blocking`, `BlockingRequest`, `KeyWaiters`, a waiting loop in `ClientHandler` that holds no lock and notices a
+client that hangs up), **effect-based replication** (`Propagation`: `XREADGROUP`, `XCLAIM`, `XAUTOCLAIM` are logged as what they
+did), `LambdaCommand.normalizedBy / blockingBy / adminWrite`, `INFO blocked_clients`, `scripts/stream-benchmark.sh`,
+`StreamBenchmark`, `examples/agent_pipeline.py`. README: new section 4.13, the tour, the use-case story, counts throughout.
+
+### Verified
+- 78 new tests (494 in total, 0 failures): ids (unsigned), the entry log against a `TreeMap` under 40 seeds x 1,500 random
+  operations (incl. the memory estimate recounted from scratch), the stream rules with a controlled clock (claim, autoclaim,
+  history, `NOACK`, lag, snapshot commands), the commands (what is logged for `XADD` / `XREADGROUP` / `XCLAIM`; **a follower that
+  replays what is logged ends with the same `XINFO STREAM ... FULL`, 25 seeds x 500 operations; a node rebuilt from a snapshot
+  likewise, 20 seeds**), 19 tests through real sockets (a waiting reader and its wake-up, 60 rounds of "an entry arrives just
+  after the command", a client that hangs up, `CLIENT KILL`, an idle timeout, stopping the server, `MULTI`, **600 jobs through 6
+  workers each processed exactly once**, a dead worker's entries claimed by another, roles, `maxmemory`, AOF replay and rewrite,
+  replication, a replica refusing `XREADGROUP`), one over TLS, and **`StreamGoldenTest`: 464 commands replayed against the
+  replies a real Redis 7.4.2 gave** (built from source in the authoring environment).
+- A mutation check: changing one delivery count in the snapshot code makes the snapshot test fail, so the comparison is not
+  vacuous.
+- With real processes (python driver): primary == replica, `kill -9` + AOF replay, `BGREWRITEAOF` + restart and a replica joining late
+  all give the same `XINFO STREAM FULL`, for three random workloads of 600 operations.
+- `redis-py` 8.1 (protocol 2) against Redis 7.4.2 and RedCake: 39 of 40 results identical (`XTRIM MAXLEN ~` trims exactly here).
+- **`DifferentialRedisTest` ran against a real Redis for the first time** (7.4.2 built from source; it had been skipped everywhere
+  before, no `redis-server` was installed): its ~220 commands on strings, hashes, lists, sets, sorted sets, keys and expiry are
+  identical, except `SELECT 1` (Redis accepts it, RedCake has one database) - taken out of the script.
+- Existing commands, `redis-benchmark -c 50 -P 16 -d 64`, old jar against new, 6 pairs in alternating order with the server and the
+  client pinned to different cores: SET 94 %, GET 97 %, INCR 94 %, HSET 95 %, ZADD 100 %, LPUSH 97 % (medians of the pairs; single
+  pairs 66-157 % on a machine with load average > 3). An earlier, unpinned comparison showed writes 8-12 % lower; the thread-local
+  look-ups every write paid for `Propagation` are now paid only by the three commands that need them (`reportsEffects`).
+- Measured (2-core laptop, load generator on the same machine): 68 / 463 bytes per entry for a 34- / 437-byte record (Redis 38 /
+  497); 15.8k-17.1k jobs/s end to end through 8 workers (Redis 17.2k-20.1k); a waiting worker is woken in 0.26-0.30 ms median.
+  Numbers in ADR 0008.
+
+### Found on the way
+- Redis's own AOF rewrite drops a pending entry whose message was deleted (`XCLAIM ... FORCE` needs the message). A snapshot
+  must not change what a client sees, hence the internal `XRESTORE`.
+- A test client written in Python kept a socket open after `close()` (an outstanding `makefile`): the "dead worker" check looked
+  as if Redis hands entries to dead clients. It does not, and neither does RedCake.
+
+### Not verified / not done
+- Only Redis 7.4.2 was compared; Redis 8's newer stream commands (`XDELEX`, `XACKDEL`, `XREADGROUP ... CLAIM`) are not implemented.
+- Delta-encoded ids (Redis's 38 bytes for a tiny entry against 68); strict first-come-first-served among readers blocked on a key.
+- Blocking list commands (`BLPOP` and friends) would be small on the same machinery; not part of this change.
+- A background (non-blocking) `BGREWRITEAOF`: rewriting a stream of millions of entries pauses writers.
+
+### Suggested next steps
+1. `BLPOP` / `BRPOP` / `BLMOVE` on `KeyWaiters`.
+2. Delta-encoded ids in `EntryLog` (one `byte[]` per block) to bring tiny entries to Redis's size.
+3. `XINFO`-driven metrics: per-group lag and pending as Prometheus gauges.
+4. Compare against Redis 8 and add the newer commands.

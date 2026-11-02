@@ -346,6 +346,16 @@ class StreamCommandsTest {
     // ------------------------------------------------------------------------------ small things
 
     @Test
+    void onlyTheCommandsThatReportWhatTheyDidAreWatchedForIt() {
+        for (String name : List.of("XREADGROUP", "XCLAIM", "XAUTOCLAIM")) {
+            assertTrue(handler.find(name).reportsEffects(), name + " logs what it did, not itself");
+        }
+        for (String name : List.of("XADD", "XACK", "XDEL", "XTRIM", "XGROUP", "XSETID", "XRESTORE", "SET", "HSET", "JSON.SET")) {
+            assertFalse(handler.find(name).reportsEffects(), name + " is logged as it is (normalized)");
+        }
+    }
+
+    @Test
     void xrestoreIsForSnapshotsOnly() {
         assertTrue(handler.find("XRESTORE").isAdmin(), "clients cannot call it");
         assertTrue(handler.find("XRESTORE").isWrite());

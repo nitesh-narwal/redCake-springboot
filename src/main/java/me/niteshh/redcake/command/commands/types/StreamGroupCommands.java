@@ -103,11 +103,11 @@ public class StreamGroupCommands implements CommandProvider {
         return List.of(
                 write("XGROUP", 1, -1, guarded(this::xgroup)),
                 read("XREAD", 3, -1, guarded(a -> xread(a))).blockingBy(c -> blockingRead(c, false)),
-                write("XREADGROUP", 6, -1, guarded(this::xreadgroup)).blockingBy(c -> blockingRead(c, true)),
+                write("XREADGROUP", 6, -1, guarded(this::xreadgroup)).blockingBy(c -> blockingRead(c, true)).reportingEffects(),
                 shrink("XACK", 3, -1, guarded(this::xack)),
                 read("XPENDING", 2, 8, guarded(this::xpending)),
-                write("XCLAIM", 5, -1, guarded(this::xclaim)),
-                write("XAUTOCLAIM", 5, 8, guarded(this::xautoclaim)),
+                write("XCLAIM", 5, -1, guarded(this::xclaim)).reportingEffects(),
+                write("XAUTOCLAIM", 5, 8, guarded(this::xautoclaim)).reportingEffects(),
                 adminWrite("XRESTORE", 6, 6, guarded(this::xrestore))
         );
     }

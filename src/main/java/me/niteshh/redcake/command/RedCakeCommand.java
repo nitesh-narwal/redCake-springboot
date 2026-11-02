@@ -80,6 +80,15 @@ public interface RedCakeCommand {
     }
 
     /**
+     * @return {@code true} if {@link #execute} may call {@link Propagation#instead} to say what to log and replicate
+     * instead of the command itself ({@code XREADGROUP}, {@code XCLAIM}, {@code XAUTOCLAIM}). The server watches for that
+     * only for commands that say so: it costs two thread-local look-ups, which every other write is spared.
+     */
+    default boolean reportsEffects() {
+        return false;
+    }
+
+    /**
      * Rewrites the command into a deterministic form <em>before</em> it is
      * executed, logged and replicated. Relative times ({@code EX 10},
      * {@code EXPIRE k 10}) become absolute ({@code PXAT <ms>}) using one single
